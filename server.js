@@ -13,7 +13,7 @@ const crypto = require("crypto");
 const { Pool } = require("pg");
 
 const PORT = Number(process.env.PORT) || 3000;
-const BUILD_ID = "2.4.0";
+const BUILD_ID = "2.4.1";
 const INIT_ADMIN_USER = String(process.env.ADMIN_USER || "admin").trim();
 const INIT_ADMIN_PASS = String(process.env.ADMIN_PASS || "admin1234");
 const PUBLIC_DIR = path.join(__dirname, "public");
@@ -232,7 +232,7 @@ async function initDb() {
       id TEXT PRIMARY KEY, branch_id TEXT NOT NULL, type TEXT NOT NULL, card TEXT NOT NULL, purchase_date TEXT NOT NULL, party TEXT, description TEXT, items_json TEXT,
       total NUMERIC NOT NULL DEFAULT 0, interest NUMERIC NOT NULL DEFAULT 0, months INT NOT NULL, first_due TEXT, status TEXT NOT NULL DEFAULT 'active', created_by TEXT, created_at BIGINT);
     CREATE INDEX IF NOT EXISTS idx_card_plans_branch ON card_plans(branch_id, card);
-    ALTER TABLE card_plans ADD COLUMN IF NOT EXISTS pay_day INT;
+    ALTER TABLE card_plans ADD COLUMN IF NOT EXISTS pay_day INT, ADD COLUMN IF NOT EXISTS body_json TEXT;
   `);
   const a = await pool.query("SELECT COUNT(*)::int AS c FROM admins");
   if (Number(a.rows[0].c) === 0) {
@@ -2202,7 +2202,8 @@ async function cardRow(bid, name) { return (await pool.query("SELECT * FROM list
 const FEE_CAT = "ค่าธรรมเนียม / ดอกเบี้ยบัตรเครดิต";
 async function feeCategory(bid) {
   const names = (await pool.query("SELECT name FROM lists WHERE branch_id=$1 AND kind='expense_category'", [bid])).rows.map(r => r.name);
-  const hit = names.find(n => /ดอกเบี้ย|ค่าธรรมเนียม/.test(n)); if (hit) return hit;
+  const hit = names.find(n => n === FEE_CAT) || names.find(n => /ดอกเบี้ย/.test(n)) || names.find(n => /บัตรเครดิต/.test(n) && /ค่าธรรมเนียม/.test(n));
+  if (hit) return hit;
   await listOpAll(await syncBranchIds(bid), "add", "expense_category", { name: FEE_CAT, fsGroup: "other_expense" });
   return FEE_CAT;
 }
@@ -2232,6 +2233,8 @@ route("POST", B + "/card-plans", async ctx => {
   const baseDesc = str(b.description, 300) || c.items.map(i => i.name || i.category).filter(Boolean).slice(0, 3).join(", ");
   await pool.query(`INSERT INTO card_plans (id,branch_id,type,card,purchase_date,party,description,items_json,total,interest,months,first_due,status,created_by,created_at,pay_day)
     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'active',$13,$14,$15)`, [planId, ctx.branch.id, type, card.name, date, party, baseDesc, JSON.stringify(c.items), c.total, interest, months, firstDue, ctx.session.actor, now(), payDay]);
+  await pool.query("UPDATE card_plans SET body_json=$1 WHERE id=$2", [JSON.stringify({ type, date, party, description: str(b.description, 300), note, items: c.items.map(i => ({ name: i.name, category: i.category, qty: i.qty, unit: i.unit, price: i.price })),
+    discountType: c.discountType, discountValue: c.discountValue, vatMode: c.vatMode, paymentChannel: card.name, months, payDay, firstMonth, interest }), planId]);
   const amts = splitAmt(c.total, months), ints = interest ? splitAmt(interest, months) : null, vats = c.vat ? splitAmt(c.vat, months) : null;
   const fee = interest ? await feeCategory(ctx.branch.id) : null;
   const docs = [];
@@ -2259,6 +2262,22 @@ route("POST", B + "/card-plans", async ctx => {
   }
   await logActivity(ctx, "card_plan_add", "บันทึกผ่อนบัตร " + card.name + ": " + baseDesc + " ฿" + c.total.toFixed(2) + " ผ่อน " + months + " งวด จ่ายทุกวันที่ " + payDay + (interest ? " ดอกเบี้ย ฿" + interest.toFixed(2) : "") + " งวดแรก " + firstDue, ctx.branch.id);
   return { ok: true, planId, firstDue, docs, perMonth: amts[0] + (ints ? ints[0] : 0) };
+});
+// รายละเอียดแผนผ่อน (ใช้กับปุ่ม "แก้ไขแผนผ่อน": เปิดฟอร์มเดิมให้แก้ แล้วบันทึกแทนแผนเดิม)
+route("GET", B + "/card-plans/:id", async ctx => {
+  await needBranch(ctx, ["cards", "expense", "invest"], "view");
+  const p = (await pool.query("SELECT * FROM card_plans WHERE id=$1 AND branch_id=$2", [ctx.params.id, ctx.branch.id])).rows[0];
+  if (!p) throw new HttpError(404, "ไม่พบแผนผ่อน");
+  const recs = (await pool.query("SELECT settled_at, plan_seq FROM records WHERE plan_id=$1", [p.id])).rows;
+  let form = null; try { form = JSON.parse(p.body_json || "null"); } catch (e) {}
+  if (!form) { // แผนที่สร้างก่อนเก็บฟอร์มเดิม: ประกอบจากข้อมูลที่มี
+    let items = []; try { items = JSON.parse(p.items_json || "[]"); } catch (e) {}
+    const sum = r2(items.reduce((a, i) => a + Number(i.amount || 0), 0)), tot = Number(p.total);
+    form = { type: p.type, date: p.purchase_date, party: p.party || "", description: p.description || "", note: "", paymentChannel: p.card, months: Number(p.months), payDay: p.pay_day || Number(String(p.first_due || "").slice(8, 10)) || null,
+      firstMonth: String(p.first_due || "").slice(0, 7), interest: Number(p.interest), items: items.map(i => ({ name: i.name, category: i.category, qty: i.qty, unit: i.unit, price: i.price })),
+      discountType: "baht", discountValue: tot < sum ? r2(sum - tot) : 0, vatMode: tot > sum + 0.005 ? "excl" : "none" };
+  }
+  return { plan: { id: p.id, card: p.card, status: p.status, paid: new Set(recs.filter(r => r.settled_at).map(r => r.plan_seq)).size, count: new Set(recs.map(r => r.plan_seq)).size, form } };
 });
 route("DELETE", B + "/card-plans/:id", async ctx => {
   await needBranch(ctx, "cards", "edit");
