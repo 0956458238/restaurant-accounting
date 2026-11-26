@@ -13,7 +13,7 @@ const crypto = require("crypto");
 const { Pool } = require("pg");
 
 const PORT = Number(process.env.PORT) || 3000;
-const BUILD_ID = "2.2.0";
+const BUILD_ID = "2.4.0";
 const INIT_ADMIN_USER = String(process.env.ADMIN_USER || "admin").trim();
 const INIT_ADMIN_PASS = String(process.env.ADMIN_PASS || "admin1234");
 const PUBLIC_DIR = path.join(__dirname, "public");
@@ -232,6 +232,7 @@ async function initDb() {
       id TEXT PRIMARY KEY, branch_id TEXT NOT NULL, type TEXT NOT NULL, card TEXT NOT NULL, purchase_date TEXT NOT NULL, party TEXT, description TEXT, items_json TEXT,
       total NUMERIC NOT NULL DEFAULT 0, interest NUMERIC NOT NULL DEFAULT 0, months INT NOT NULL, first_due TEXT, status TEXT NOT NULL DEFAULT 'active', created_by TEXT, created_at BIGINT);
     CREATE INDEX IF NOT EXISTS idx_card_plans_branch ON card_plans(branch_id, card);
+    ALTER TABLE card_plans ADD COLUMN IF NOT EXISTS pay_day INT;
   `);
   const a = await pool.query("SELECT COUNT(*)::int AS c FROM admins");
   if (Number(a.rows[0].c) === 0) {
@@ -1318,7 +1319,16 @@ async function computeAccounts(bid, from, to) {
     const inRange = mine.filter(m => m.date >= from && m.date <= to);
     return { id: row ? row.id : "", name, openingBalance: row && row.opening_balance != null ? ob : null, openingDate: od, balance,
       periodIn: r2(inRange.filter(m => m.amount > 0).reduce((a, m) => a + m.amount, 0)), periodOut: r2(-inRange.filter(m => m.amount < 0).reduce((a, m) => a + m.amount, 0)),
-      count: mine.length, orphan: !row };
+      count: mine.length, orphan: !row,
+      // สำหรับหน้าภาพรวม: ยอดต้นงวด + รับเข้า − จ่ายออก = ยอดปลายงวด (รับ/จ่ายแยกส่วนที่เป็นโอนระหว่างบัญชี)
+      startBalance: r2((od && od > from) ? 0 : ob + mine.filter(m => m.date < from).reduce((a, m) => a + m.amount, 0)),
+      periodOpening: r2(od && od > from && od <= to ? ob : 0),
+      endBalance: r2(((od && od > from) ? (od <= to ? ob : 0) : ob + mine.filter(m => m.date < from).reduce((a, m) => a + m.amount, 0)) + inRange.reduce((a, m) => a + m.amount, 0)),
+      inDocs: r2(inRange.filter(m => m.amount > 0 && m.kind !== "transfer").reduce((a, m) => a + m.amount, 0)),
+      outDocs: r2(-inRange.filter(m => m.amount < 0 && m.kind !== "transfer").reduce((a, m) => a + m.amount, 0)),
+      inTransfer: r2(inRange.filter(m => m.amount > 0 && m.kind === "transfer").reduce((a, m) => a + m.amount, 0)),
+      outTransfer: r2(-inRange.filter(m => m.amount < 0 && m.kind === "transfer").reduce((a, m) => a + m.amount, 0)),
+      countIn: inRange.filter(m => m.amount > 0).length, countOut: inRange.filter(m => m.amount < 0).length };
   };
   for (const r of ls.rows) {
     if (r.is_credit) {
@@ -2183,6 +2193,10 @@ function cardDueFor(date, cut, due) {
   if (due <= cut) m++;
   return ymd(y, m, due);
 }
+function defaultFirstMonth(date, payDay) {
+  const [y, m, d] = date.split("-").map(Number);
+  return d < Math.min(payDay, lastDayOf(y, m)) ? date.slice(0, 7) : ymd(y, m + 1, 1).slice(0, 7);
+}
 const isCardRow = r => !!(r && r.is_credit && r.card_due_day && r.card_cut_day);
 async function cardRow(bid, name) { return (await pool.query("SELECT * FROM lists WHERE branch_id=$1 AND kind='payment_channel' AND name=$2", [bid, name])).rows[0]; }
 const FEE_CAT = "ค่าธรรมเนียม / ดอกเบี้ยบัตรเครดิต";
@@ -2200,23 +2214,30 @@ route("POST", B + "/card-plans", async ctx => {
   const b = ctx.body || {};
   const type = b.type === "invest" ? "invest" : "expense"; need(ctx, type, "edit");
   const card = await cardRow(ctx.branch.id, str(b.paymentChannel, 120));
-  if (!isCardRow(card)) throw bad("กรุณาเลือกบัตรเครดิตที่ตั้งค่าวันตัดรอบ/วันครบกำหนดแล้ว (เมนู หมวด & ช่องทาง → ช่องทางชำระเงิน)");
+  if (!card || !card.is_credit) throw bad("การผ่อนชำระใช้ได้กับช่องทางแบบเครดิต (เช่น บัตรเครดิต) เท่านั้น");
   const months = Math.round(num(b.months, 0)); if (months < 2 || months > 60) throw bad("จำนวนงวดผ่อนต้องอยู่ระหว่าง 2 - 60 เดือน");
   const c = calcRecord(b, type);
   if (c.items.some(i => i.stockItemId)) throw bad("การแบ่งจ่ายยังไม่รองรับการผูกสต็อก — เอาการผูกสต็อกออก แล้วบันทึกรับเข้าสต็อกแยก");
   const date = isDate(b.date) ? b.date : todayBkk();
   const interest = r2(Math.max(0, num(b.interest, 0)));
-  const firstDue = cardDueFor(date, Number(card.card_cut_day), Number(card.card_due_day));
+  // จ่ายทุกวันที่ payDay ของเดือน · งวดแรก = เดือน firstMonth (ค่าเริ่มต้น = วันจ่ายครั้งแรกที่ถัดจากวันที่ซื้อ)
+  const payDay = Math.round(num(b.payDay, card.card_due_day || Number(date.slice(8, 10))));
+  if (payDay < 1 || payDay > 31) throw bad("วันที่จ่ายต้องอยู่ระหว่าง 1 - 31");
+  const firstMonth = isPeriod(b.firstMonth) ? b.firstMonth : defaultFirstMonth(date, payDay);
+  if (firstMonth < date.slice(0, 7)) throw bad("งวดแรกต้องไม่ก่อนเดือนที่ซื้อ");
+  const [fy, fm] = firstMonth.split("-").map(Number);
+  const payDate = k => ymd(fy, fm + k, payDay);
+  const firstDue = payDate(0);
   const planId = uid(), party = str(b.party, 200), note = str(b.note, 1000);
   const baseDesc = str(b.description, 300) || c.items.map(i => i.name || i.category).filter(Boolean).slice(0, 3).join(", ");
-  await pool.query(`INSERT INTO card_plans (id,branch_id,type,card,purchase_date,party,description,items_json,total,interest,months,first_due,status,created_by,created_at)
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'active',$13,$14)`, [planId, ctx.branch.id, type, card.name, date, party, baseDesc, JSON.stringify(c.items), c.total, interest, months, firstDue, ctx.session.actor, now()]);
+  await pool.query(`INSERT INTO card_plans (id,branch_id,type,card,purchase_date,party,description,items_json,total,interest,months,first_due,status,created_by,created_at,pay_day)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'active',$13,$14,$15)`, [planId, ctx.branch.id, type, card.name, date, party, baseDesc, JSON.stringify(c.items), c.total, interest, months, firstDue, ctx.session.actor, now(), payDay]);
   const amts = splitAmt(c.total, months), ints = interest ? splitAmt(interest, months) : null, vats = c.vat ? splitAmt(c.vat, months) : null;
   const fee = interest ? await feeCategory(ctx.branch.id) : null;
-  const day = Number(date.slice(8, 10)), dueDay = Number(card.card_due_day);
   const docs = [];
   const insert = async (rtype, k, items, vat, desc) => {
-    const recDate = addMonthsKeep(date, k, day), due = addMonthsKeep(firstDue, k, dueDay);
+    // ค่าใช้จ่ายของงวดนี้ลงในวันที่จ่ายงวดนั้น (ไม่ลงเต็มจำนวนในเดือนที่ซื้อ)
+    const recDate = payDate(k), due = recDate;
     const total = r2(items.reduce((a, i) => a + i.amount, 0));
     const cats = [...new Set(items.map(i => i.category))];
     const docNo = await nextDocNo(ctx.branch.id, rtype, recDate);
@@ -2232,19 +2253,19 @@ route("POST", B + "/card-plans", async ctx => {
     c.items.forEach((it, i) => { const share = i === c.items.length - 1 ? r2(left) : r2(amts[k] * (c.subtotal > 0 ? it.amount / c.subtotal : 1 / c.items.length)); left = r2(left - share);
       items.push({ name: it.name, category: it.category, qty: 1, unit: "งวด", price: share, amount: share }); });
     const desc = baseDesc + " (ผ่อนงวด " + (k + 1) + "/" + months + ")";
-    if (ints && type === "expense") items.push({ name: "ดอกเบี้ย/ค่าธรรมเนียมผ่อนชำระ", category: fee, qty: 1, unit: "งวด", price: ints[k], amount: ints[k] });
     await insert(type, k, items, vats ? vats[k] : 0, desc);
-    if (ints && type === "invest") await insert("expense", k, [{ name: "ดอกเบี้ย/ค่าธรรมเนียมผ่อนชำระ: " + baseDesc, category: fee, qty: 1, unit: "งวด", price: ints[k], amount: ints[k] }], 0, "ดอกเบี้ยผ่อน " + baseDesc + " (งวด " + (k + 1) + "/" + months + ")");
+    // ดอกเบี้ยแยกเป็นเอกสารรายจ่ายของงวดเดียวกัน (VAT จะได้ไม่ถูกเฉลี่ยไปที่ดอกเบี้ย)
+    if (ints) await insert("expense", k, [{ name: "ดอกเบี้ย/ค่าธรรมเนียมผ่อนชำระ: " + baseDesc, category: fee, qty: 1, unit: "งวด", price: ints[k], amount: ints[k] }], 0, "ดอกเบี้ยผ่อน " + baseDesc + " (งวด " + (k + 1) + "/" + months + ")");
   }
-  await logActivity(ctx, "card_plan_add", "บันทึกผ่อนบัตร " + card.name + ": " + baseDesc + " ฿" + c.total.toFixed(2) + " แบ่ง " + months + " เดือน" + (interest ? " ดอกเบี้ย ฿" + interest.toFixed(2) : "") + " งวดแรกครบ " + firstDue, ctx.branch.id);
+  await logActivity(ctx, "card_plan_add", "บันทึกผ่อนบัตร " + card.name + ": " + baseDesc + " ฿" + c.total.toFixed(2) + " ผ่อน " + months + " งวด จ่ายทุกวันที่ " + payDay + (interest ? " ดอกเบี้ย ฿" + interest.toFixed(2) : "") + " งวดแรก " + firstDue, ctx.branch.id);
   return { ok: true, planId, firstDue, docs, perMonth: amts[0] + (ints ? ints[0] : 0) };
 });
 route("DELETE", B + "/card-plans/:id", async ctx => {
   await needBranch(ctx, "cards", "edit");
   const p = (await pool.query("SELECT * FROM card_plans WHERE id=$1 AND branch_id=$2", [ctx.params.id, ctx.branch.id])).rows[0];
   if (!p) throw new HttpError(404, "ไม่พบแผนผ่อน");
-  const recs = (await pool.query("SELECT id, settled_at FROM records WHERE plan_id=$1", [p.id])).rows;
-  const paid = recs.filter(r => r.settled_at).length;
+  const recs = (await pool.query("SELECT id, settled_at, plan_seq FROM records WHERE plan_id=$1", [p.id])).rows;
+  const paid = new Set(recs.filter(r => r.settled_at).map(r => r.plan_seq)).size;
   if (paid && !ctx.query.remaining) throw bad("แผนนี้ชำระไปแล้ว " + paid + " งวด — เลือก \"ยกเลิกงวดที่เหลือ\" แทน");
   const del = recs.filter(r => !r.settled_at).map(r => r.id);
   if (del.length) { await pool.query("DELETE FROM files WHERE record_id = ANY($1::text[])", [pgArr(del)]); await pool.query("DELETE FROM records WHERE id = ANY($1::text[])", [pgArr(del)]); }
@@ -2255,7 +2276,7 @@ route("DELETE", B + "/card-plans/:id", async ctx => {
 async function cardBillsDue(bid, days) {
   const lim = new Date(Date.now() + 7 * 3600000 + days * 86400000).toISOString().slice(0, 10);
   const { rows } = await pool.query(`SELECT r.payment_channel AS card, r.due_date, SUM(r.total)::float AS total, COUNT(*)::int AS c FROM records r
-    JOIN lists l ON l.branch_id=r.branch_id AND l.kind='payment_channel' AND l.name=r.payment_channel AND l.is_credit AND l.card_due_day IS NOT NULL
+    JOIN lists l ON l.branch_id=r.branch_id AND l.kind='payment_channel' AND l.name=r.payment_channel AND l.is_credit
     WHERE r.branch_id=$1 AND r.type<>'income' AND r.due_date IS NOT NULL AND r.due_date<>'' AND r.settled_at IS NULL AND r.due_date<=$2 GROUP BY r.payment_channel, r.due_date ORDER BY r.due_date`, [bid, lim]);
   const t = todayBkk();
   return rows.map(r => ({ card: r.card, dueDate: r.due_date, total: r2(r.total), count: Number(r.c), overdue: r.due_date < t }));
@@ -2265,15 +2286,18 @@ route("GET", B + "/cards", async ctx => {
   const bid = ctx.branch.id, t = todayBkk(), soon = new Date(Date.now() + 7 * 3600000 + 7 * 86400000).toISOString().slice(0, 10);
   const chans = (await pool.query("SELECT * FROM lists WHERE branch_id=$1 AND kind='payment_channel' AND is_credit ORDER BY sort_order", [bid])).rows;
   const cards = [];
-  for (const ch of chans.filter(isCardRow)) {
+  const used = new Set((await pool.query(`SELECT DISTINCT payment_channel AS n FROM records WHERE branch_id=$1 AND type<>'income' AND payment_channel IS NOT NULL
+    UNION SELECT DISTINCT card AS n FROM card_plans WHERE branch_id=$1`, [bid])).rows.map(r => r.n));
+  const shown = chans.filter(c => isCardRow(c) || used.has(c.name));
+  for (const ch of shown) {
     const recs = (await pool.query(`SELECT id, type, doc_no, rec_date, party, description, total, due_date, plan_id, plan_seq, plan_count, source FROM records
       WHERE branch_id=$1 AND payment_channel=$2 AND type<>'income' AND due_date IS NOT NULL AND due_date<>'' AND settled_at IS NULL ORDER BY due_date, rec_date`, [bid, ch.name])).rows;
     const bills = {};
     recs.forEach(r => { const bl = bills[r.due_date] = bills[r.due_date] || { dueDate: r.due_date, total: 0, records: [] }; bl.total += Number(r.total);
       bl.records.push({ id: r.id, type: r.type, docNo: r.doc_no, date: r.rec_date, party: r.party || "", description: r.description || "", total: Number(r.total), planSeq: r.plan_seq, planCount: r.plan_count, installment: r.source === "installment" }); });
     const billList = Object.values(bills).map(bl => ({ ...bl, total: r2(bl.total), status: bl.dueDate < t ? "overdue" : bl.dueDate <= soon ? "soon" : "upcoming" }));
-    const plans = (await pool.query(`SELECT p.*, (SELECT COUNT(*) FROM records r WHERE r.plan_id=p.id AND r.settled_at IS NOT NULL)::int AS paid,
-      (SELECT COUNT(*) FROM records r WHERE r.plan_id=p.id)::int AS cnt, (SELECT COALESCE(SUM(total),0) FROM records r WHERE r.plan_id=p.id AND r.settled_at IS NULL)::float AS remaining,
+    const plans = (await pool.query(`SELECT p.*, (SELECT COUNT(DISTINCT plan_seq) FROM records r WHERE r.plan_id=p.id AND r.settled_at IS NOT NULL)::int AS paid,
+      (SELECT COUNT(DISTINCT plan_seq) FROM records r WHERE r.plan_id=p.id)::int AS cnt, (SELECT COALESCE(SUM(total),0) FROM records r WHERE r.plan_id=p.id AND r.settled_at IS NULL)::float AS remaining,
       (SELECT MIN(due_date) FROM records r WHERE r.plan_id=p.id AND r.settled_at IS NULL) AS next_due
       FROM card_plans p WHERE p.branch_id=$1 AND p.card=$2 ORDER BY p.purchase_date DESC LIMIT 100`, [bid, ch.name])).rows;
     const hist = (await pool.query(`SELECT settle_batch, MAX(settled_date) AS d, MAX(settled_channel) AS ch, MAX(settled_by) AS by, SUM(total)::float AS s, COUNT(*)::int AS c FROM records
@@ -2281,12 +2305,12 @@ route("GET", B + "/cards", async ctx => {
     const fees = hist.length ? (await pool.query("SELECT ref_id, total FROM records WHERE source='card_fee' AND ref_id = ANY($1::text[])", [pgArr(hist.map(h => h.settle_batch))])).rows : [];
     const outstanding = r2(recs.reduce((a, r) => a + Number(r.total), 0));
     const limit = ch.card_limit == null ? null : Number(ch.card_limit);
-    cards.push({ id: ch.id, name: ch.name, cutDay: Number(ch.card_cut_day), dueDay: Number(ch.card_due_day), limit, outstanding, available: limit == null ? null : r2(limit - outstanding),
+    cards.push({ id: ch.id, name: ch.name, cutDay: Number(ch.card_cut_day) || null, dueDay: Number(ch.card_due_day) || null, limit, outstanding, available: limit == null ? null : r2(limit - outstanding),
       bills: billList, plans: plans.map(p => ({ id: p.id, type: p.type, purchaseDate: p.purchase_date, party: p.party || "", description: p.description || "", total: Number(p.total), interest: Number(p.interest),
-        months: Number(p.months), status: p.status, paid: Number(p.paid), count: Number(p.cnt), remaining: r2(p.remaining), nextDue: p.next_due || "", createdBy: p.created_by || "" })),
+        months: Number(p.months), payDay: p.pay_day == null ? null : Number(p.pay_day), status: p.status, paid: Number(p.paid), count: Number(p.cnt), remaining: r2(p.remaining), nextDue: p.next_due || "", createdBy: p.created_by || "" })),
       history: hist.map(h => ({ batch: h.settle_batch, date: h.d, channel: h.ch, by: h.by, total: r2(h.s), count: Number(h.c), fee: r2((fees.find(f => f.ref_id === h.settle_batch) || {}).total || 0) })) });
   }
-  return { cards, notSetUp: chans.filter(c => !isCardRow(c)).map(c => ({ id: c.id, name: c.name })), alerts: await cardBillsDue(bid, 7) };
+  return { cards, notSetUp: chans.filter(c => !shown.includes(c)).map(c => ({ id: c.id, name: c.name })), alerts: await cardBillsDue(bid, 7) };
 });
 // ชำระบิลบัตร: เลือกรายการ (ทั้งบิล) + บัญชีที่จ่าย → ตัดเงินจากบัญชีนั้น · ใส่ดอกเบี้ย/ค่าปรับได้
 route("POST", B + "/cards/pay", async ctx => {
