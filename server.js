@@ -180,6 +180,12 @@ async function initDb() {
     CREATE TABLE IF NOT EXISTS activity (
       id TEXT PRIMARY KEY, at BIGINT NOT NULL, actor TEXT, actor_kind TEXT, branch_id TEXT, action TEXT, detail TEXT);
     CREATE INDEX IF NOT EXISTS idx_activity_at ON activity(at);
+    ALTER TABLE lists ADD COLUMN IF NOT EXISTS opening_balance NUMERIC, ADD COLUMN IF NOT EXISTS opening_date TEXT;
+    ALTER TABLE records ADD COLUMN IF NOT EXISTS settled_channel TEXT;
+    CREATE TABLE IF NOT EXISTS transfers (
+      id TEXT PRIMARY KEY, branch_id TEXT NOT NULL, tr_date TEXT NOT NULL, from_ch TEXT NOT NULL, to_ch TEXT NOT NULL,
+      amount NUMERIC NOT NULL DEFAULT 0, note TEXT, created_by TEXT, created_at BIGINT);
+    CREATE INDEX IF NOT EXISTS idx_transfers_branch ON transfers(branch_id, tr_date);
   `);
   const a = await pool.query("SELECT COUNT(*)::int AS c FROM admins");
   if (Number(a.rows[0].c) === 0) {
@@ -473,7 +479,7 @@ route("DELETE", "/api/admin/branches/:id", async ctx => {
   if (!verifyPw(String(ctx.body.adminPassword || ""), me.rows[0].pass_hash)) throw bad("รหัสผ่านผู้ดูแลไม่ถูกต้อง");
   if (str(ctx.body.confirmName, 200) !== rows[0].name) throw bad("พิมพ์ชื่อสาขาให้ตรงเพื่อยืนยันการลบ");
   const id = rows[0].id;
-  for (const t of ["files", "records", "lists", "stock_moves", "stock_items", "payroll_items", "payroll_runs", "employees", "doc_counters", "sessions"]) {
+  for (const t of ["files", "records", "lists", "stock_moves", "stock_items", "payroll_items", "payroll_runs", "employees", "doc_counters", "sessions", "transfers"]) {
     await pool.query("DELETE FROM " + t + " WHERE branch_id=$1", [id]);
   }
   await pool.query("DELETE FROM branches WHERE id=$1", [id]);
@@ -518,7 +524,7 @@ route("GET", "/api/admin/backup", async ctx => {
   needAdmin(ctx);
   const withFiles = ctx.query.files === "1";
   const out = { app: "restaurant-accounting", build: BUILD_ID, exportedAt: new Date().toISOString(), tables: {} };
-  for (const t of ["settings", "admins", "branches", "lists", "records", "doc_counters", "stock_items", "stock_moves", "employees", "payroll_runs", "payroll_items", "activity", "files"]) {
+  for (const t of ["settings", "admins", "branches", "lists", "records", "doc_counters", "stock_items", "stock_moves", "employees", "payroll_runs", "payroll_items", "transfers", "activity", "files"]) {
     if (t === "files" && !withFiles) { out.tables.files = (await pool.query("SELECT id, record_id, branch_id, filename, mime, size, created_at FROM files")).rows; continue; }
     out.tables[t] = (await pool.query("SELECT * FROM " + t)).rows;
   }
@@ -529,30 +535,31 @@ route("GET", "/api/admin/backup", async ctx => {
 /* ---------------- lists (หมวด / ช่องทาง / ผู้ขาย / หน่วย) ---------------- */
 route("GET", B + "/lists", async ctx => {
   await needBranch(ctx);
-  const { rows } = await pool.query("SELECT id, kind, name, is_credit FROM lists WHERE branch_id=$1 ORDER BY sort_order", [ctx.branch.id]);
+  const { rows } = await pool.query("SELECT id, kind, name, is_credit, opening_balance, opening_date FROM lists WHERE branch_id=$1 ORDER BY sort_order", [ctx.branch.id]);
   const out = {}; LIST_KINDS.forEach(k => { out[k] = []; });
-  rows.forEach(r => { if (out[r.kind]) out[r.kind].push({ id: r.id, name: r.name, isCredit: !!r.is_credit }); });
+  rows.forEach(r => { if (out[r.kind]) out[r.kind].push({ id: r.id, name: r.name, isCredit: !!r.is_credit, openingBalance: r.opening_balance == null ? null : Number(r.opening_balance), openingDate: r.opening_date || "" }); });
   return { lists: out };
 });
 route("POST", B + "/lists", async ctx => {
   await needBranch(ctx);
   const kind = ctx.body.kind, name = str(ctx.body.name, 120);
   if (!LIST_KINDS.includes(kind) || !name) throw bad("ข้อมูลไม่ถูกต้อง");
-  if (!ctx.session.isAdmin && !["vendor", "unit"].includes(kind)) throw new HttpError(403, "เฉพาะผู้ดูแลเท่านั้นที่เพิ่มหมวดนี้ได้");
   const dup = await pool.query("SELECT 1 FROM lists WHERE branch_id=$1 AND kind=$2 AND name=$3", [ctx.branch.id, kind, name]);
   if (dup.rows.length) throw bad("มีรายการนี้อยู่แล้ว");
   const id = uid();
-  await pool.query("INSERT INTO lists (id,branch_id,kind,name,is_credit,sort_order) VALUES ($1,$2,$3,$4,$5,$6)", [id, ctx.branch.id, kind, name, !!ctx.body.isCredit, now()]);
+  const ob = kind === "payment_channel" && !ctx.body.isCredit && ctx.body.openingBalance !== undefined && ctx.body.openingBalance !== "" ? r2(num(ctx.body.openingBalance, 0)) : null;
+  await pool.query("INSERT INTO lists (id,branch_id,kind,name,is_credit,sort_order,opening_balance,opening_date) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
+    [id, ctx.branch.id, kind, name, !!ctx.body.isCredit, now(), ob, ob !== null ? (isDate(ctx.body.openingDate) ? ctx.body.openingDate : todayBkk()) : null]);
   await logActivity(ctx, "list_add", "เพิ่ม " + name, ctx.branch.id);
   return { ok: true, id };
 });
 const LIST_RENAME_MAP = {
   income_category: [["records", "category"]], expense_category: [["records", "category"]], invest_category: [["records", "category"]],
-  vendor: [["records", "party"]], payment_channel: [["records", "payment_channel"], ["payroll_runs", "payment_channel"]],
+  vendor: [["records", "party"]], payment_channel: [["records", "payment_channel"], ["records", "settled_channel"], ["payroll_runs", "payment_channel"], ["transfers", "from_ch"], ["transfers", "to_ch"]],
   stock_category: [["stock_items", "category"]], unit: [["stock_items", "unit"]]
 };
 route("PUT", B + "/lists/:id", async ctx => {
-  await needBranch(ctx); needAdmin(ctx);
+  await needBranch(ctx);
   const cur = await pool.query("SELECT * FROM lists WHERE id=$1 AND branch_id=$2", [ctx.params.id, ctx.branch.id]);
   if (!cur.rows[0]) throw new HttpError(404, "ไม่พบรายการ");
   const L = cur.rows[0];
@@ -579,8 +586,9 @@ route("PUT", B + "/lists/:id", async ctx => {
   return { ok: true };
 });
 route("DELETE", B + "/lists/:id", async ctx => {
-  await needBranch(ctx); needAdmin(ctx);
-  await pool.query("DELETE FROM lists WHERE id=$1 AND branch_id=$2", [ctx.params.id, ctx.branch.id]);
+  await needBranch(ctx);
+  const { rows } = await pool.query("DELETE FROM lists WHERE id=$1 AND branch_id=$2 RETURNING name", [ctx.params.id, ctx.branch.id]);
+  if (rows[0]) await logActivity(ctx, "list_delete", "ลบ " + rows[0].name, ctx.branch.id);
   return { ok: true };
 });
 
@@ -633,7 +641,7 @@ function recordOut(r, files) {
   return { id: r.id, type: r.type, docNo: r.doc_no, date: r.rec_date, party: r.party || "", description: r.description || "", category: r.category || "",
     items, subtotal: Number(r.subtotal), discountType: r.discount_type || "baht", discountValue: Number(r.discount_value) || 0, discount: Number(r.discount),
     vatMode: r.vat_mode, vat: Number(r.vat_amount), total: Number(r.total), paymentChannel: r.payment_channel || "", dueDate: r.due_date || "",
-    settledAt: Number(r.settled_at) || null, settledDate: r.settled_date || "", settledBy: r.settled_by || "",
+    settledAt: Number(r.settled_at) || null, settledDate: r.settled_date || "", settledBy: r.settled_by || "", settledChannel: r.settled_channel || "",
     source: r.source, refId: r.ref_id || "", note: r.note || "", createdBy: r.created_by || "", createdAt: Number(r.created_at),
     updatedBy: r.updated_by || "", updatedAt: Number(r.updated_at) || null, files: files || [], fileCount: r.file_count != null ? Number(r.file_count) : (files || []).length };
 }
@@ -690,7 +698,13 @@ async function saveRecord(ctx, existing) {
   const date = isDate(b.date) ? b.date : todayBkk();
   const c = calcRecord(b, type);
   const payment = str(b.paymentChannel, 120);
-  const dueDate = isDate(b.dueDate) ? b.dueDate : "";
+  const chRow = payment ? (await pool.query("SELECT is_credit FROM lists WHERE branch_id=$1 AND kind='payment_channel' AND name=$2", [ctx.branch.id, payment])).rows[0] : null;
+  const isCredit = !!(chRow && chRow.is_credit);
+  const unpaid = b.unpaid === true || isCredit;
+  // ชำระแล้ว = เงินเข้า/ออกบัญชีทันที (ต้องเลือกช่องทาง) · ยังไม่ชำระ/บัตรเครดิต = ค้างรับ/ค้างจ่าย (ต้องมีวันครบกำหนด)
+  const dueDate = unpaid ? (isDate(b.dueDate) ? b.dueDate : "") : "";
+  if (unpaid && !dueDate) throw bad("รายการที่ยังไม่ชำระ ต้องระบุวันครบกำหนด");
+  if (!unpaid && !payment) throw bad("กรุณาเลือกช่องทาง" + (type === "income" ? "รับเงิน" : "ชำระเงิน") + " (เงินเข้า/ออกจากบัญชีไหน)");
   const cats = [...new Set(c.items.map(i => i.category))];
   const category = cats.length === 1 ? cats[0] : cats.join(", ");
   const description = str(b.description, 300) || c.items.map(i => i.name || i.category).filter(Boolean).slice(0, 3).join(", ");
@@ -702,7 +716,7 @@ async function saveRecord(ctx, existing) {
   if (existing) {
     await pool.query(`UPDATE records SET branch_id=$1,type=$2,doc_no=$3,rec_date=$4,party=$5,description=$6,category=$7,items_json=$8,subtotal=$9,discount_type=$10,discount_value=$11,discount=$12,
       vat_mode=$13,vat_amount=$14,total=$15,payment_channel=$16,due_date=$17,note=$18,updated_by=$19,updated_at=$20 WHERE id=$21`, [...vals, ctx.session.actor, now(), id]);
-    if (!dueDate) await pool.query("UPDATE records SET settled_at=NULL, settled_date=NULL, settled_by=NULL WHERE id=$1", [id]);
+    if (!dueDate) await pool.query("UPDATE records SET settled_at=NULL, settled_date=NULL, settled_by=NULL, settled_channel=NULL WHERE id=$1", [id]);
   } else {
     await pool.query(`INSERT INTO records (branch_id,type,doc_no,rec_date,party,description,category,items_json,subtotal,discount_type,discount_value,discount,
       vat_mode,vat_amount,total,payment_channel,due_date,note,created_by,created_at,source,id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,'manual',$21)`,
@@ -737,12 +751,18 @@ route("POST", B + "/records/:id/settle", async ctx => {
   await needBranch(ctx);
   const undo = !!ctx.body.undo;
   const d = isDate(ctx.body.date) ? ctx.body.date : todayBkk();
+  const ch = str(ctx.body.channel, 120);
+  if (!undo) {
+    const c = await pool.query("SELECT is_credit FROM lists WHERE branch_id=$1 AND kind='payment_channel' AND name=$2", [ctx.branch.id, ch]);
+    if (!c.rows[0]) throw bad("กรุณาเลือกบัญชีที่รับ/จ่ายเงิน");
+    if (c.rows[0].is_credit) throw bad("เลือกบัญชีเงินจริง (เช่น เงินสด หรือบัญชีธนาคาร) ไม่ใช่ช่องทางแบบเครดิต");
+  }
   const { rows } = await pool.query(undo
-    ? "UPDATE records SET settled_at=NULL, settled_date=NULL, settled_by=NULL WHERE id=$1 AND branch_id=$2 RETURNING doc_no"
-    : "UPDATE records SET settled_at=$3, settled_date=$4, settled_by=$5 WHERE id=$1 AND branch_id=$2 RETURNING doc_no",
-    undo ? [ctx.params.id, ctx.branch.id] : [ctx.params.id, ctx.branch.id, now(), d, ctx.session.actor]);
+    ? "UPDATE records SET settled_at=NULL, settled_date=NULL, settled_by=NULL, settled_channel=NULL WHERE id=$1 AND branch_id=$2 RETURNING doc_no"
+    : "UPDATE records SET settled_at=$3, settled_date=$4, settled_by=$5, settled_channel=$6 WHERE id=$1 AND branch_id=$2 RETURNING doc_no",
+    undo ? [ctx.params.id, ctx.branch.id] : [ctx.params.id, ctx.branch.id, now(), d, ctx.session.actor, ch]);
   if (!rows[0]) throw new HttpError(404, "ไม่พบเอกสาร");
-  await logActivity(ctx, "record_settle", (undo ? "ยกเลิกสถานะชำระแล้ว " : "บันทึกชำระแล้ว ") + rows[0].doc_no, ctx.branch.id);
+  await logActivity(ctx, "record_settle", (undo ? "ยกเลิกสถานะชำระแล้ว " : "บันทึกชำระแล้ว (" + ch + ") ") + rows[0].doc_no, ctx.branch.id);
   return { ok: true };
 });
 route("POST", B + "/records/:id/files", async ctx => {
@@ -823,7 +843,103 @@ route("GET", B + "/summary", async ctx => {
     due: due.rows.map(r => ({ id: r.id, type: r.type, docNo: r.doc_no, date: r.rec_date, party: r.party || "", description: r.description || "", total: Number(r.total), dueDate: r.due_date, paymentChannel: r.payment_channel || "" })),
     stock: { items: Number(stock.rows[0].n) || 0, value: r2(stock.rows[0].v), low: Number(stock.rows[0].low) || 0,
       lowItems: lowItems.rows.map(r => ({ id: r.id, name: r.name, qty: Number(r.qty), minQty: Number(r.min_qty), unit: r.unit || "" })) },
-    employees: Number(emp.rows[0].c) || 0, recent: recent.rows.map(r => recordOut(r)) };
+    employees: Number(emp.rows[0].c) || 0, recent: recent.rows.map(r => recordOut(r)), accounts: (await computeAccounts(bid, from, to)).accounts };
+});
+
+/* ================= เงินในบัญชี (ยอดคงเหลือแต่ละบัญชี) ================= */
+// เงินเคลื่อนไหวของแต่ละบัญชี: เอกสารที่ชำระทันที (วันที่เอกสาร) + เอกสารค้างที่กดชำระแล้ว (วันที่ชำระ) + โอนระหว่างบัญชี
+async function accountMovements(bid) {
+  const recs = await pool.query(`SELECT id, type, doc_no, rec_date, party, description, total, payment_channel, due_date, settled_date, settled_channel, created_at FROM records WHERE branch_id=$1`, [bid]);
+  const trs = await pool.query("SELECT * FROM transfers WHERE branch_id=$1", [bid]);
+  const mv = [];
+  recs.rows.forEach(r => {
+    const amt = Number(r.total) * (r.type === "income" ? 1 : -1);
+    const base = { kind: r.type, recordId: r.id, docNo: r.doc_no, text: [r.party, r.description].filter(Boolean).join(" · "), createdAt: Number(r.created_at) || 0 };
+    if (!r.due_date) { if (r.payment_channel) mv.push({ ...base, ch: r.payment_channel, date: r.rec_date, amount: amt }); }
+    else if (r.settled_date && r.settled_channel) mv.push({ ...base, ch: r.settled_channel, date: r.settled_date, amount: amt, settle: true });
+  });
+  trs.rows.forEach(t => {
+    const base = { kind: "transfer", transferId: t.id, date: t.tr_date, createdAt: Number(t.created_at) || 0, note: t.note || "" };
+    mv.push({ ...base, ch: t.from_ch, amount: -Number(t.amount), text: "โอนไป " + t.to_ch + (t.note ? " · " + t.note : "") });
+    mv.push({ ...base, ch: t.to_ch, amount: Number(t.amount), text: "รับโอนจาก " + t.from_ch + (t.note ? " · " + t.note : "") });
+  });
+  return mv;
+}
+async function computeAccounts(bid, from, to) {
+  const ls = await pool.query("SELECT id, name, is_credit, opening_balance, opening_date FROM lists WHERE branch_id=$1 AND kind='payment_channel' ORDER BY sort_order", [bid]);
+  const mv = await accountMovements(bid);
+  const t = todayBkk();
+  const accounts = [], credits = [];
+  const known = new Set(ls.rows.map(r => r.name));
+  const build = (name, row) => {
+    const od = (row && row.opening_date) || "", ob = row && row.opening_balance != null ? Number(row.opening_balance) : 0;
+    const mine = mv.filter(m => m.ch === name && (!od || m.date >= od));
+    const balance = r2(ob + mine.filter(m => m.date <= t).reduce((a, m) => a + m.amount, 0));
+    const inRange = mine.filter(m => m.date >= from && m.date <= to);
+    return { id: row ? row.id : "", name, openingBalance: row && row.opening_balance != null ? ob : null, openingDate: od, balance,
+      periodIn: r2(inRange.filter(m => m.amount > 0).reduce((a, m) => a + m.amount, 0)), periodOut: r2(-inRange.filter(m => m.amount < 0).reduce((a, m) => a + m.amount, 0)),
+      count: mine.length, orphan: !row };
+  };
+  for (const r of ls.rows) {
+    if (r.is_credit) {
+      const due = await pool.query("SELECT type, COALESCE(SUM(total),0)::float AS s, COUNT(*)::int AS c FROM records WHERE branch_id=$1 AND payment_channel=$2 AND due_date IS NOT NULL AND due_date<>'' AND settled_at IS NULL GROUP BY type", [bid, r.name]);
+      credits.push({ id: r.id, name: r.name, payable: r2(due.rows.filter(x => x.type !== "income").reduce((a, x) => a + Number(x.s), 0)), receivable: r2(due.rows.filter(x => x.type === "income").reduce((a, x) => a + Number(x.s), 0)), count: due.rows.reduce((a, x) => a + Number(x.c), 0) });
+    } else accounts.push(build(r.name, r));
+  }
+  [...new Set(mv.map(m => m.ch))].filter(n => !known.has(n)).forEach(n => accounts.push(build(n, null)));
+  const unpaid = await pool.query("SELECT type, COALESCE(SUM(total),0)::float AS s FROM records WHERE branch_id=$1 AND due_date IS NOT NULL AND due_date<>'' AND settled_at IS NULL GROUP BY type", [bid]);
+  return { accounts, credits, total: r2(accounts.reduce((a, x) => a + x.balance, 0)),
+    payable: r2(unpaid.rows.filter(x => x.type !== "income").reduce((a, x) => a + Number(x.s), 0)), receivable: r2(unpaid.rows.filter(x => x.type === "income").reduce((a, x) => a + Number(x.s), 0)) };
+}
+route("GET", B + "/accounts", async ctx => {
+  await needBranch(ctx);
+  const { from, to } = rangeOf(ctx.query);
+  return { from, to, ...(await computeAccounts(ctx.branch.id, from, to)) };
+});
+route("GET", B + "/accounts/statement", async ctx => {
+  await needBranch(ctx);
+  const { from, to } = rangeOf(ctx.query);
+  const name = str(ctx.query.ch, 120);
+  const row = (await pool.query("SELECT * FROM lists WHERE branch_id=$1 AND kind='payment_channel' AND name=$2", [ctx.branch.id, name])).rows[0];
+  const od = (row && row.opening_date) || "", ob = row && row.opening_balance != null ? Number(row.opening_balance) : 0;
+  const mine = (await accountMovements(ctx.branch.id)).filter(m => m.ch === name && (!od || m.date >= od)).sort((a, b) => a.date.localeCompare(b.date) || a.createdAt - b.createdAt);
+  let bal = ob + mine.filter(m => m.date < from).reduce((a, m) => a + m.amount, 0);
+  const startBal = r2(bal);
+  const rows = mine.filter(m => m.date >= from && m.date <= to).map(m => { bal += m.amount; return { ...m, amount: r2(m.amount), balance: r2(bal) }; });
+  return { name, from, to, openingBalance: row && row.opening_balance != null ? ob : null, openingDate: od, startBalance: startBal, endBalance: r2(bal), rows };
+});
+route("POST", B + "/accounts/opening", async ctx => {
+  await needBranch(ctx);
+  const id = str(ctx.body.id, 100);
+  const clear = ctx.body.amount === null || ctx.body.amount === "";
+  const amt = r2(num(ctx.body.amount, NaN));
+  if (!clear && !isFinite(amt)) throw bad("ยอดยกมาไม่ถูกต้อง");
+  const d = isDate(ctx.body.date) ? ctx.body.date : todayBkk();
+  const { rows } = await pool.query("UPDATE lists SET opening_balance=$1, opening_date=$2 WHERE id=$3 AND branch_id=$4 AND kind='payment_channel' RETURNING name",
+    [clear ? null : amt, clear ? null : d, id, ctx.branch.id]);
+  if (!rows[0]) throw new HttpError(404, "ไม่พบบัญชี");
+  await logActivity(ctx, "account_opening", clear ? "ล้างยอดยกมาของ " + rows[0].name : "ตั้งยอดยกมา " + rows[0].name + " ฿" + amt.toFixed(2) + " ณ " + d, ctx.branch.id);
+  return { ok: true };
+});
+route("POST", B + "/transfers", async ctx => {
+  await needBranch(ctx);
+  const b = ctx.body || {};
+  const fromCh = str(b.from, 120), toCh = str(b.to, 120), amount = r2(num(b.amount, NaN));
+  if (!fromCh || !toCh || fromCh === toCh) throw bad("กรุณาเลือกบัญชีต้นทางและปลายทางให้ต่างกัน");
+  if (!isFinite(amount) || amount <= 0) throw bad("จำนวนเงินต้องมากกว่า 0");
+  const ok = await pool.query("SELECT name FROM lists WHERE branch_id=$1 AND kind='payment_channel' AND is_credit=FALSE AND name = ANY($2::text[])", [ctx.branch.id, "{" + [fromCh, toCh].map(x => '"' + x.replace(/["\\]/g, "") + '"').join(",") + "}"]);
+  if (ok.rows.length < 2) throw bad("บัญชีไม่ถูกต้อง");
+  const date = isDate(b.date) ? b.date : todayBkk();
+  await pool.query("INSERT INTO transfers (id,branch_id,tr_date,from_ch,to_ch,amount,note,created_by,created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)",
+    [uid(), ctx.branch.id, date, fromCh, toCh, amount, str(b.note, 300), ctx.session.actor, now()]);
+  await logActivity(ctx, "transfer", "โอน ฿" + amount.toFixed(2) + " จาก " + fromCh + " ไป " + toCh, ctx.branch.id);
+  return { ok: true };
+});
+route("DELETE", B + "/transfers/:id", async ctx => {
+  await needBranch(ctx);
+  const { rows } = await pool.query("DELETE FROM transfers WHERE id=$1 AND branch_id=$2 RETURNING amount, from_ch, to_ch", [ctx.params.id, ctx.branch.id]);
+  if (rows[0]) await logActivity(ctx, "transfer_delete", "ลบรายการโอน ฿" + Number(rows[0].amount).toFixed(2) + " " + rows[0].from_ch + " → " + rows[0].to_ch, ctx.branch.id);
+  return { ok: true };
 });
 
 /* ================= สต็อกสินค้า ================= */

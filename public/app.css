@@ -245,3 +245,12 @@ table.tbl { width: 100%; border-collapse: collapse; }
 @media (max-width: 520px) { .kpis { grid-template-columns: minmax(0, 1fr); } .kpi .val { font-size: 21px; } .user-chip span { display: none; } }
 .file-add svg { width: 22px; height: 22px; } .branch-card .bmeta svg { width: 14px; height: 14px; }
 .tbl input.input.sm { min-width: 56px; }
+.acc-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(270px, 1fr)); gap: 14px; }
+.acc-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 10px; }
+.acc-tiles .mini-kpi:hover { border-color: var(--primary-100); background: #fff; }
+.acc-ic { width: 36px; height: 36px; border-radius: 9px; background: var(--primary-50); color: var(--primary); display: grid; place-items: center; flex: none; }
+.acc-bal { font-size: 26px; font-weight: 600; font-variant-numeric: tabular-nums; margin: 14px 0 6px; letter-spacing: -.01em; }
+.branch-dot { min-width: 40px; width: auto !important; padding: 0 7px; white-space: nowrap; }
+.sb-branch .branch-dot { min-width: 34px; max-width: 64px; overflow: hidden; font-size: 12px; }
+.seg[data-paid] { display: flex; } .seg[data-paid] button { padding: 7px 8px; }
+.seg[data-paid] button.on:first-child { color: var(--good); } .seg[data-paid] button.on:last-child { color: var(--warn); }
