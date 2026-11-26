@@ -574,14 +574,17 @@ function quickAddList(kind) {
     ok.onclick = submit; $("[name=name]", m.el).onkeydown = e => { if (e.key === "Enter") { e.preventDefault(); submit(); } };
   });
 }
-async function openDoc(type, id, onSaved) {
+// prefill = { form, replacePlanId } ใช้ตอน "แก้ไขแผนผ่อน": เปิดฟอร์มเดิม บันทึกแล้วแทนที่แผนเดิม
+async function openDoc(type, id, onSaved, prefill) {
   const T = TYPE[type];
   let d;
   if (id) { try { d = (await bapi("GET", "/records/" + id)).record; } catch (e) { return toast(e.message, "bad"); } }
   else d = { type, date: today(), party: "", description: "", paymentChannel: listNames("payment_channel")[0] || "", dueDate: "", items: [{ name: "", category: listNames(T.cat)[0] || "", qty: 1, unit: "", price: "" }], discountType: "baht", discountValue: 0, vatMode: "none", note: "", files: [] };
+  const pf = !id && prefill ? prefill.form : null;
+  if (pf) Object.assign(d, { date: pf.date, party: pf.party || "", description: pf.description || "", note: pf.note || "", paymentChannel: pf.paymentChannel, items: pf.items.length ? pf.items : d.items, discountType: pf.discountType || "baht", discountValue: pf.discountValue || 0, vatMode: pf.vatMode || "none" });
   d.items = d.items.map(i => ({ ...i }));
   const ro = ["payroll", "advance", "installment", "card_fee"].includes(d.source) || !canEdit(type);
-  d.months = 1; d.interest = "";
+  d.months = pf ? "n" : 1; d.interest = "";
   if (type !== "income") await loadStockItems().catch(() => {});
   const pending = [];
   let cats = listNames(T.cat), chans = listNames("payment_channel");
@@ -607,7 +610,7 @@ async function openDoc(type, id, onSaved) {
       <label class="field"><span>${T.party}</span><input class="input" name="party" value="${esc(d.party)}" list="vendor-dl" placeholder="${type === "income" ? "เช่น ลูกค้าหน้าร้าน, Grab" : "เช่น แม็คโคร"}" ${ro ? "readonly" : ""}></label>
     </div>
     <div class="grid g3" style="margin-top:14px">
-      <div class="field"><span class="small" style="display:block;margin-bottom:5px;color:var(--text-2);font-weight:500">สถานะการ${W.settle}</span><div class="seg" data-paid style="width:100%"><button type="button" data-v="paid" style="flex:1">${icon("check", "").replace("<svg", '<svg style="width:14px;height:14px;vertical-align:-2px"')} ${W.paid}</button><button type="button" data-v="unpaid" style="flex:1">${W.unpaid}</button></div></div>
+      <div class="field"><span class="small" style="display:block;margin-bottom:5px;color:var(--text-2);font-weight:500">สถานะการ${W.settle}</span><div class="seg" data-paid style="width:100%"><button type="button" data-v="paid" style="flex:1">${icon("check", "").replace("<svg", '<svg style="width:14px;height:14px;vertical-align:-2px"')} ${W.paid}</button><button type="button" data-v="unpaid" style="flex:1">${W.unpaid}</button></div><div class="cred-stat hidden" data-credstat></div></div>
       <label class="field"><span data-chlbl></span><div class="row" style="gap:6px"><select class="input" name="paymentChannel" ${ro ? "disabled" : ""}></select>${ro ? "" : `<button type="button" class="btn icon" data-addch title="เพิ่มช่องทาง / บัญชีใหม่">${icon("plus")}</button>`}</div></label>
       <label class="field" data-duewrap><span>วันครบกำหนด${W.settle} <em>*</em></span><input type="date" class="input" name="dueDate" value="${esc(d.dueDate)}" ${ro ? "readonly" : ""}></label>
     </div>
@@ -643,11 +646,16 @@ async function openDoc(type, id, onSaved) {
     </div></div>`;
   const foot = `<div class="left">${id && !ro ? `<button class="btn danger" data-del>${icon("trash")} ลบ</button>` : ""}${id ? `<button class="btn" data-print>${icon("print")} พิมพ์</button>` : ""}</div>
     <button class="btn" data-close>${ro ? "ปิด" : "ยกเลิก"}</button>${ro ? "" : `<button class="btn primary" data-save>${icon("check")} บันทึก</button>`}`;
-  const m = openModal({ title: (id ? esc(d.docNo) + " · " : "") + (id ? T.doc : T.new), body, foot, size: "xl", sticky: true });
+  const planBtns = id && d.source === "installment" && d.planId && canEdit("cards") ? `<button class="btn" data-planedit>${icon("edit")} แก้ไขแผนผ่อน</button><button class="btn danger" data-plancancel>${icon("trash")} ยกเลิกแผนผ่อน</button>` : "";
+  const m = openModal({ title: pf ? "แก้ไขแผนผ่อน · " + esc(pf.party || pf.description || "") : (id ? esc(d.docNo) + " · " : "") + (id ? T.doc : T.new), body, foot: planBtns ? foot.replace('<div class="left">', '<div class="left">' + planBtns) : foot, size: "xl", sticky: true });
   const el = m.el;
+  const pe = $("[data-planedit]", el); if (pe) pe.onclick = () => editPlan(d.planId, () => { m.close(); onSaved && onSaved(); }, () => m.close());
+  const pc = $("[data-plancancel]", el); if (pc) pc.onclick = () => cancelPlan(d.planId, () => { m.close(); onSaved && onSaved(); });
   const recalc = () => { if ($("[data-instinfo]", el)) setTimeout(() => { try { instInfo(); } catch (e) {} }); const t = calcDoc(d); $("[data-sub]", el).textContent = fmt(t.subtotal); $("[data-disc]", el).textContent = "-" + fmt(t.discount); $("[data-vat]", el).textContent = fmt(t.vat); $("[data-total]", el).textContent = baht(t.total);
     $$("tr[data-i]", el).forEach(tr => { const it = d.items[+tr.dataset.i]; $("[data-amt]", tr).textContent = fmt(num(it.qty) * num(it.price)); }); };
-  let fmTouched = false;
+  let fmTouched = !!pf;
+  if (pf) { const set = (n, v) => { const i = $(`[name=${n}]`, el); if (i && v != null && v !== "") i.value = v; };
+    set("months", pf.months); set("payDay", pf.payDay); set("firstMonth", pf.firstMonth); set("interest", pf.interest || ""); }
   const firstMonthFor = (date, pd) => { const [y, mo, dd] = date.split("-").map(Number); const ld = new Date(Date.UTC(y, mo, 0)).getUTCDate();
     if (dd < Math.min(pd, ld)) return date.slice(0, 7); const nm = mo === 12 ? (y + 1) + "-01" : y + "-" + String(mo + 1).padStart(2, "0"); return nm; };
   const payDateOf = (ym, k, pd) => { let [y, mo] = ym.split("-").map(Number); mo += k; while (mo > 12) { mo -= 12; y++; } const ld = new Date(Date.UTC(y, mo, 0)).getUTCDate(); return y + "-" + String(mo).padStart(2, "0") + "-" + String(Math.min(pd, ld)).padStart(2, "0"); };
@@ -681,6 +689,13 @@ async function openDoc(type, id, onSaved) {
     $("[data-duewrap]", el).style.visibility = show ? "visible" : "hidden";
     if (show && !d.dueDate && !ro) { d.dueDate = addDays(d.date || today(), 30); $("[name=dueDate]", el).value = d.dueDate; }
     $$("[data-paid] button", el).forEach(b => b.classList.toggle("on", (b.dataset.v === "unpaid") === d.unpaid));
+    // จ่ายด้วยบัตร/ช่องทางเครดิต: ไม่ใช่ "จ่ายแล้ว" — เงินจริงยังไม่ออกจนกว่าจะชำระบิล แสดงสถานะจริงแทนปุ่ม
+    const credit = !d.unpaid && type !== "income" && isCreditChannel(d.paymentChannel);
+    $("[data-paid]", el).classList.toggle("hidden", credit);
+    const cs = $("[data-credstat]", el); cs.classList.toggle("hidden", !credit);
+    if (credit) cs.innerHTML = id && d.settledAt ? `<span class="chip good">ชำระบิลแล้ว ${thDate(d.settledDate, true)}${d.settledChannel ? " · " + esc(d.settledChannel) : ""}</span>`
+      : id ? `<span class="chip ${d.dueDate && d.dueDate < today() ? "bad" : "warn"}">ยังไม่ชำระ · รอชำระบิล ครบ ${d.dueDate ? thDate(d.dueDate, true) : "-"}</span>`
+      : `<span class="chip warn">จ่ายด้วยบัตร · ยังไม่ตัดเงินจริง</span><div class="small muted" style="margin-top:4px">เงินสด/ธนาคารจะถูกตัดตอนกด “ชำระบิล” ในเมนูบัตรเครดิต</div>`;
     $("[data-chlbl]", el).innerHTML = d.unpaid ? (type === "income" ? "จะรับเงินผ่าน (ไม่บังคับ)" : "จะจ่ายผ่าน (ไม่บังคับ)") : W.ch + " <em>*</em>";
     instInfo();
   };
@@ -731,7 +746,8 @@ async function openDoc(type, id, onSaved) {
       if (months < 2 || months > 60) throw new Error("จำนวนงวดผ่อนต้องอยู่ระหว่าง 2 - 60");
       if (payDay < 1 || payDay > 31) throw new Error("วันที่จ่ายต้องอยู่ระหว่าง 1 - 31");
       const r = await bapi("POST", "/card-plans", { ...payload, months, payDay, firstMonth: $("[name=firstMonth]", el).value, interest: num($("[name=interest]", el).value) });
-      toast(`บันทึกผ่อน ${months} งวดแล้ว · เดือนละ ${baht(r.perMonth)} · งวดแรก ${thDate(r.firstDue)}`); m.close(); onSaved && onSaved(); return;
+      if (prefill && prefill.replacePlanId) { try { await bapi("DELETE", "/card-plans/" + prefill.replacePlanId); } catch (e) { toast("บันทึกแผนใหม่แล้ว แต่ลบแผนเดิมไม่สำเร็จ: " + e.message + " — ยกเลิกแผนเดิมที่เมนูบัตรเครดิต", "bad"); } }
+      toast(`${prefill ? "แก้ไขแผนผ่อนแล้ว" : "บันทึกผ่อน " + months + " งวดแล้ว"} · เดือนละ ${baht(r.perMonth)} · งวดแรก ${thDate(r.firstDue)}`); m.close(); onSaved && onSaved(); return;
     }
     if (needDue && !d.dueDate) throw new Error("กรุณาระบุวันครบกำหนด" + W.settle);
     if (!needDue && !d.paymentChannel) throw new Error("กรุณาเลือก" + W.ch + " หรือกด “" + W.unpaid + "”");
@@ -1578,7 +1594,7 @@ BRANCH_PAGES.cards = { title: () => "บัตรเครดิต", state: { o
         ${cd.plans.length ? `<div class="section-t" style="margin-top:14px">แผนผ่อนชำระ</div><div class="tbl-wrap"><table class="tbl"><thead><tr><th>วันที่ซื้อ</th><th>รายการ</th><th class="num">ยอดรวม</th><th>ผ่อนแล้ว</th><th class="num">คงเหลือ</th><th>งวดถัดไป</th><th></th></tr></thead><tbody>
           ${cd.plans.map(p => `<tr style="${p.status !== "active" ? "opacity:.6" : ""}"><td>${thDate(p.purchaseDate, true)}</td><td><div class="bold desc">${esc(p.description)}</div><div class="muted small">${esc(p.party)}${p.payDay ? " · จ่ายทุกวันที่ " + p.payDay : ""}${p.interest ? " · ดอกเบี้ย " + fmt(p.interest) : ""}</div></td><td class="num">${fmt(p.total + p.interest)}</td>
             <td><div class="small">${p.paid}/${p.count} งวด${p.status === "cancelled" ? " · ยกเลิก" : p.status === "closed" ? " · ปิดแผน" : ""}</div><div class="hbar" style="grid-template-columns:1fr;padding:2px 0"><div class="tr" style="width:90px"><div class="fl" style="width:${p.count ? p.paid / p.count * 100 : 0}%;background:var(--good)"></div></div></div></td>
-            <td class="num bold">${fmt(p.remaining)}</td><td class="small">${p.nextDue ? thDate(p.nextDue, true) : "-"}</td><td>${ed && p.remaining > 0 && p.status === "active" ? `<button class="btn ghost sm" data-cancelplan="${p.id}" data-paid="${p.paid}">ยกเลิก</button>` : ""}</td></tr>`).join("")}</tbody></table></div>` : ""}
+            <td class="num bold">${fmt(p.remaining)}</td><td class="small">${p.nextDue ? thDate(p.nextDue, true) : "-"}</td><td style="white-space:nowrap">${ed && p.remaining > 0 && p.status === "active" ? `${p.paid ? "" : `<button class="btn sm" data-editplan="${p.id}">${icon("edit")} แก้ไข</button> `}<button class="btn ghost sm" data-cancelplan="${p.id}">ยกเลิก</button>` : ""}</td></tr>`).join("")}</tbody></table></div>` : ""}
         ${cd.history.length ? `<details style="margin-top:12px"><summary class="section-t" style="cursor:pointer">ประวัติการชำระบิล (${cd.history.length})</summary>${cd.history.map(h => `<div class="list-row small"><div class="grow">${thDate(h.date)} · จ่ายจาก <b>${esc(h.channel)}</b> · ${h.count} รายการ<div class="muted">${esc(h.by)}${h.fee ? " · ดอกเบี้ย/ค่าธรรมเนียม " + fmt(h.fee) : ""}</div></div><b class="num">${fmt(h.total + h.fee)}</b>${ed ? `<button class="btn ghost sm" data-unpay="${h.batch}">ยกเลิกการชำระ</button>` : ""}</div>`).join("")}</details>` : ""}
       </div></div>`;
   });
@@ -1590,10 +1606,21 @@ BRANCH_PAGES.cards = { title: () => "บัตรเครดิต", state: { o
   $$("[data-pay]", c).forEach(b => { b.onclick = () => { const { cd, bill } = findBill(b.dataset.pay); payBillModal(cd, bill, after); }; });
   $$("[data-unpay]", c).forEach(b => { b.onclick = async () => { if (!await confirmBox("ยกเลิกการชำระบิลนี้?\nรายการจะกลับเป็นค้างจ่าย และเงินจะคืนเข้าบัญชีที่ใช้จ่าย (ดอกเบี้ย/ค่าธรรมเนียมที่บันทึกพร้อมกันจะถูกลบ)", { danger: true, okText: "ยกเลิกการชำระ" })) return;
     try { await bapi("POST", "/cards/unpay", { batch: b.dataset.unpay }); toast("ยกเลิกการชำระแล้ว"); after(); } catch (e) { toast(e.message, "bad"); } }; });
-  $$("[data-cancelplan]", c).forEach(b => { b.onclick = async () => { const paid = +b.dataset.paid;
-    if (!await confirmBox(paid ? `แผนนี้ชำระไปแล้ว ${paid} งวด\nยกเลิกงวดที่เหลือทั้งหมด? (เอกสารงวดที่ยังไม่ชำระจะถูกลบ)` : "ยกเลิกแผนผ่อนนี้? เอกสารทุกงวดจะถูกลบ", { danger: true, okText: "ยืนยันยกเลิก" })) return;
-    try { await bapi("DELETE", "/card-plans/" + b.dataset.cancelplan + (paid ? "?remaining=1" : "")); toast("ยกเลิกแล้ว"); after(); } catch (e) { toast(e.message, "bad"); } }; });
+  $$("[data-cancelplan]", c).forEach(b => { b.onclick = () => cancelPlan(b.dataset.cancelplan, after); });
+  $$("[data-editplan]", c).forEach(b => { b.onclick = () => editPlan(b.dataset.editplan, after); });
 } };
+// แก้ไขแผนผ่อน = เปิดฟอร์มเดิมให้แก้ แล้วบันทึกเป็นแผนใหม่แทนแผนเดิม (ทำได้ถ้ายังไม่ได้ชำระงวดไหน)
+async function editPlan(planId, after, closeCurrent) {
+  let p; try { p = (await bapi("GET", "/card-plans/" + planId)).plan; } catch (e) { return toast(e.message, "bad"); }
+  if (p.paid) return toast(`แผนนี้ชำระไปแล้ว ${p.paid} งวด แก้ไขไม่ได้ — ใช้ “ยกเลิกแผนผ่อน” (ยกเลิกงวดที่เหลือ) แล้วบันทึกใหม่`, "bad");
+  if (closeCurrent) closeCurrent();
+  openDoc(p.form.type, null, after, { form: p.form, replacePlanId: planId });
+}
+async function cancelPlan(planId, after) {
+  let p; try { p = (await bapi("GET", "/card-plans/" + planId)).plan; } catch (e) { return toast(e.message, "bad"); }
+  if (!await confirmBox(p.paid ? `แผนนี้ชำระไปแล้ว ${p.paid}/${p.count} งวด\nยกเลิกงวดที่เหลือทั้งหมด? (งวดที่ยังไม่ชำระจะถูกลบ)` : `ยกเลิกแผนผ่อนนี้ทั้งหมด ${p.count} งวด?\nเอกสารทุกงวด (รวมดอกเบี้ย) จะถูกลบ`, { danger: true, okText: "ยืนยันยกเลิก" })) return;
+  try { const r = await bapi("DELETE", "/card-plans/" + planId + (p.paid ? "?remaining=1" : "")); toast("ยกเลิกแล้ว · ลบ " + r.removed + " เอกสาร"); await refreshPending(); after(); } catch (e) { toast(e.message, "bad"); }
+}
 function payBillModal(cd, bill, after) {
   const chans = listNames("payment_channel").filter(n => !isCreditChannel(n));
   const m = openModal({ title: "ชำระบิล " + esc(cd.name) + " · ครบกำหนด " + thDate(bill.dueDate), size: "lg", body: `

@@ -325,3 +325,9 @@ table.tbl { width: 100%; border-collapse: collapse; }
 .sched-r { display: grid; grid-template-columns: 80px 1fr auto; gap: 10px; padding: 6px 12px; font-size: 13px; border-top: 1px solid #f0f2f6; }
 .sched-r.total { background: var(--surface-2); font-weight: 600; }
 @media (max-width: 520px) { .inst-choice { grid-template-columns: 1fr; } }
+/* iPhone: ช่องวันที่/เดือน/เวลา ไม่ล้นขอบจอ */
+input[type=date].input, input[type=month].input, input[type=time].input { -webkit-appearance: none; appearance: none; min-width: 0; max-width: 100%; display: block; text-align: left; }
+input[type=date].input::-webkit-date-and-time-value, input[type=month].input::-webkit-date-and-time-value, input[type=time].input::-webkit-date-and-time-value { text-align: left; }
+.input.sm[type=date], .input.sm[type=month] { display: inline-block; }
+@media (max-width: 860px) { .modal-f .left { flex-wrap: wrap; width: 100%; margin-right: 0; } .modal-f { justify-content: stretch; } .modal-f > .btn { flex: 1; } }
+.cred-stat { min-height: 38px; display: flex; flex-direction: column; justify-content: center; }
