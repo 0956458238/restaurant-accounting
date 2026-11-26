@@ -1471,6 +1471,7 @@ async function listsEditor(c, bid, token, state) {
     <div data-rows>${lists[k].map((x, i) => `<div class="list-row"><div class="row" style="gap:2px"><button class="btn ghost sm icon" data-up="${i}" ${i ? "" : "disabled"}>${icon("up")}</button><button class="btn ghost sm icon" data-dn="${i}" ${i < lists[k].length - 1 ? "" : "disabled"}>${icon("down")}</button></div>
       <div class="grow bold">${esc(x.name)}</div>${fsSel(x)}${k === "payment_channel" ? `<label class="check small"><input type="checkbox" data-cr="${x.id}" ${x.isCredit ? "checked" : ""}> มีวันครบกำหนด</label>` : ""}
       <button class="btn ghost sm" data-ren="${x.id}">${icon("edit")} เปลี่ยนชื่อ</button><button class="btn ghost sm icon" data-del="${x.id}">${icon("trash")}</button></div>`).join("") || emptyBox("ยังไม่มีรายการ")}</div></div>
+    ${lr.synced ? `<div class="info-box" style="margin-top:12px">${icon("link", "").replace("<svg", '<svg style="width:14px;height:14px;vertical-align:-2px"')} <b>ใช้ร่วมกันทุกสาขา</b> — เพิ่ม / เปลี่ยนชื่อ / ลบ / เรียงลำดับ / ตั้งกลุ่มในงบ ที่นี่ จะมีผลกับทุกสาขาพร้อมกัน (ยอดยกมาของบัญชีเงินยังแยกตามสาขา)</div>` : ""}
     ${FSG[k] ? `<div class="info-box" style="margin-top:12px">“กลุ่มในงบ” ใช้จัดหมวดนี้ลงในงบกำไรขาดทุน / งบแสดงฐานะการเงิน — ถ้าไม่เลือก ระบบจะเดาจากชื่อหมวด (แสดงในวงเล็บ “อัตโนมัติ”)</div>` : ""}
     <div class="field-hint" style="margin-top:10px">เปลี่ยนชื่อหมวด → เอกสารเก่าที่ใช้ชื่อเดิมจะเปลี่ยนตามให้อัตโนมัติ · ลบหมวด → เอกสารเก่ายังคงชื่อเดิมไว้</div>`;
   if (ro) $$("[data-add],[data-new],[data-credit],[data-up],[data-dn],[data-cr],[data-ren],[data-del]", c).forEach(x => { x.disabled = true; });
@@ -1635,7 +1636,7 @@ function branchModal(b, all, after) {
     <label class="field" style="margin-top:14px"><span>ที่อยู่</span><textarea class="input" name="address" rows="2">${esc(b.address)}</textarea></label>
     <div class="field" style="margin-top:14px"><span class="small" style="display:block;margin-bottom:6px;color:var(--text-2);font-weight:500">สีประจำสาขา</span><div class="color-pick">${COLORS.map(x => `<button type="button" data-color="${x}" class="${x === b.color ? "on" : ""}" style="background:${x}"></button>`).join("")}</div></div>
     ${isNew ? `<div class="section-t" style="margin-top:18px">รหัสผ่านเข้าสาขา</div><div class="grid g2"><label class="field"><span>รหัสผ่าน (อย่างน้อย 6 ตัว) <em>*</em></span>${pwInput("password", "", "new-password")}</label><label class="field"><span>ยืนยันรหัสผ่าน <em>*</em></span>${pwInput("confirm", "", "new-password")}</label></div>
-      <label class="field" style="margin-top:14px"><span>หมวด / ช่องทาง / หน่วยนับเริ่มต้น</span><select class="input" name="copyFrom">${opt("", "ใช้ค่าเริ่มต้นของระบบ (ร้านอาหาร)")}${all.map(x => opt(x.id, "คัดลอกจาก " + x.name)).join("")}</select></label>` : ""}
+      <label class="field" style="margin-top:14px"><span>หมวด / ช่องทาง / หน่วยนับเริ่มต้น</span><select class="input" name="copyFrom">${opt("", "ใช้ค่าเริ่มต้นของระบบ (ร้านอาหาร)", !all.length)}${all.map((x, i) => opt(x.id, "คัดลอกจาก " + x.name, i === 0)).join("")}</select></label>` : ""}
     ${!isNew ? `<div class="section-t" style="margin-top:18px">อันตราย</div><div class="row wrap"><button type="button" class="btn" data-toggle>${b.active ? "ปิดใช้งานสาขา (ซ่อนจากหน้าแรก)" : "เปิดใช้งานสาขาอีกครั้ง"}</button><button type="button" class="btn danger" data-delete>${icon("trash")} ลบสาขาและข้อมูลทั้งหมด</button></div>` : ""}`,
     foot: `<button class="btn" data-close>ยกเลิก</button><button class="btn primary" data-save>${icon("check")} ${isNew ? "สร้างสาขา" : "บันทึก"}</button>` });
   bindPwEyes(m.el);
@@ -1657,10 +1658,37 @@ ADMIN_PAGES.lists = { title: "หมวด & ช่องทาง", state: { ki
   const br = (await api("GET", "/api/admin/branches")).branches; const st = this.state;
   if (!br.length) { c.innerHTML = emptyBox("ยังไม่มีสาขา", "building"); return; }
   if (!br.some(b => b.id === st.bid)) st.bid = br[0].id;
-  c.innerHTML = `<div class="page-head"><div class="grow"><h2>หมวด & ช่องทาง</h2><div class="muted small">แต่ละสาขาตั้งหมวดรายรับ-รายจ่าย ช่องทางชำระ ผู้ขาย และหน่วยนับแยกกันได้</div></div><label class="row"><span class="muted small">สาขา</span><select class="input" style="width:220px" data-bid>${br.map(b => opt(b.id, b.name, b.id === st.bid)).join("")}</select></label></div><div data-ed></div>`;
+  const synced = (await api("GET", "/api/admin/settings")).settings.lists_sync_all === "1";
+  c.innerHTML = `<div class="page-head"><div class="grow"><h2>หมวด & ช่องทาง</h2><div class="muted small">${synced ? "โหมด <b>ใช้ร่วมกันทุกสาขา</b> — แก้ที่สาขาไหนก็มีผลทุกสาขา" : "โหมดแยกสาขา — แต่ละสาขาตั้งหมวดของตัวเอง"} · เปลี่ยนโหมดได้ที่ ตั้งค่าบริษัท & ระบบ</div></div>
+    <label class="row"><span class="muted small">สาขา</span><select class="input" style="width:220px" data-bid>${br.map(b => opt(b.id, b.name, b.id === st.bid)).join("")}</select></label>
+    ${br.length > 1 ? `<button class="btn primary" data-copy>${icon("copy")} คัดลอกจากสาขาหนึ่งไปสาขาอื่น</button>` : ""}</div><div data-ed></div>`;
   $("[data-bid]", c).onchange = e => { st.bid = e.target.value; ADMIN_PAGES.lists.render(c); };
+  if ($("[data-copy]", c)) $("[data-copy]", c).onclick = () => copyListsModal(br, st.bid, () => ADMIN_PAGES.lists.render(c));
   await listsEditor($("[data-ed]", c), st.bid, S.adminToken, st);
 } };
+// คัดลอกหมวด / ช่องทาง / ผู้ขาย / หน่วย (และสินค้าสต็อก) จากสาขาต้นทาง ไปสาขาอื่น
+function copyListsModal(br, fromId, after) {
+  const m = openModal({ title: "คัดลอกหมวด & รายการ ระหว่างสาขา", size: "lg", body: `<div class="grid g2"><label class="field"><span>คัดลอกจากสาขา (ต้นทาง)</span><select class="input" name="from">${br.map(b => opt(b.id, b.name, b.id === fromId)).join("")}</select></label><div></div></div>
+    <div class="section-t" style="margin-top:16px">ไปยังสาขา (ปลายทาง)</div><label class="check" style="margin-bottom:8px"><input type="checkbox" data-alltg> ทุกสาขา</label><div class="row wrap" data-tgs></div>
+    <div class="section-t" style="margin-top:16px">คัดลอกอะไรบ้าง</div><div class="row wrap">${Object.keys(LIST_LABEL).map(k => `<label class="check chip-check"><input type="checkbox" data-kind="${k}" checked> ${LIST_LABEL[k]}</label>`).join("")}</div>
+    <label class="check chip-check" style="margin-top:10px"><input type="checkbox" name="stockItems" checked> รายการสินค้าในสต็อก (ชื่อ รหัส หมวด หน่วย จุดสั่งซื้อ — <b>ไม่</b>คัดลอกจำนวนคงเหลือ)</label>
+    <label class="check" style="margin-top:12px"><input type="checkbox" name="removeExtra"> ลบรายการในสาขาปลายทางที่ไม่มีในสาขาต้นทาง (ให้เหมือนกันทุกอย่าง)</label>
+    <div class="info-box" style="margin-top:14px">ระบบจะ <b>เพิ่ม</b> รายการที่สาขาปลายทางยังไม่มี และปรับลำดับ / เครดิต / กลุ่มในงบ ให้เหมือนต้นทาง · ไม่แตะเอกสาร ยอดเงิน ยอดยกมา หรือจำนวนสต็อกของสาขาปลายทาง · สินค้าที่ชื่อซ้ำจะข้าม</div>`,
+    foot: `<button class="btn" data-close>ยกเลิก</button><button class="btn primary" data-ok>${icon("copy")} คัดลอก</button>` });
+  const drawT = () => { const f = $("[name=from]", m.el).value; $("[data-tgs]", m.el).innerHTML = br.filter(b => b.id !== f).map(b => `<label class="check chip-check"><input type="checkbox" data-tg="${b.id}" ${br.length === 2 ? "checked" : ""}> ${esc(b.name)}</label>`).join(""); };
+  $("[name=from]", m.el).onchange = drawT; drawT();
+  $("[data-alltg]", m.el).onchange = e => $$("[data-tg]", m.el).forEach(x => { x.checked = e.target.checked; });
+  const ok = $("[data-ok]", m.el); ok.onclick = () => withBtn(ok, async () => {
+    const to = $$("[data-tg]", m.el).filter(x => x.checked).map(x => x.dataset.tg), kinds = $$("[data-kind]", m.el).filter(x => x.checked).map(x => x.dataset.kind);
+    if (!to.length) throw new Error("กรุณาเลือกสาขาปลายทาง");
+    const removeExtra = $("[name=removeExtra]", m.el).checked;
+    if (removeExtra && !await confirmBox("ยืนยันลบรายการในสาขาปลายทางที่ไม่มีในต้นทาง?\n(เอกสารเก่ายังเก็บชื่อเดิมไว้ ไม่หาย)", { danger: true, okText: "ยืนยัน" })) return;
+    const r = await api("POST", "/api/admin/lists/copy", { from: $("[name=from]", m.el).value, to, kinds, stockItems: $("[name=stockItems]", m.el).checked, removeExtra });
+    m.close();
+    openModal({ title: "คัดลอกจาก " + esc(r.from) + " เรียบร้อย", body: `<table class="tbl"><thead><tr><th>สาขา</th><th class="num">เพิ่มใหม่</th><th class="num">ปรับให้ตรง</th><th class="num">ลบ</th><th class="num">สินค้าสต็อกใหม่</th></tr></thead><tbody>${r.result.map(x => `<tr><td class="bold">${esc(x.branch)}</td><td class="num">${x.added}</td><td class="num">${x.updated}</td><td class="num">${x.removed}</td><td class="num">${x.stockAdded}</td></tr>`).join("")}</tbody></table>`, foot: `<button class="btn primary" data-close>ตกลง</button>` });
+    after();
+  }).catch(() => {});
+}
 ADMIN_PAGES.settings = { title: "ตั้งค่าบริษัท & ระบบ", async render(c) {
   const s = (await api("GET", "/api/admin/settings")).settings; let logo = s.company_logo || "";
   const inp = (k, l, h, t) => `<label class="field"><span>${l}</span><input class="input ${t === "num" ? "num" : ""}" name="${k}" value="${esc(s[k])}" ${t === "num" ? 'inputmode="decimal"' : ""}>${h ? `<div class="field-hint">${h}</div>` : ""}</label>`;
@@ -1668,6 +1696,8 @@ ADMIN_PAGES.settings = { title: "ตั้งค่าบริษัท & ร�
     <div class="card"><div class="card-h"><h3>ข้อมูลบริษัท / ร้าน</h3></div><div class="card-b"><div class="row" style="gap:16px;align-items:flex-start;margin-bottom:14px"><div class="brand-logo" style="width:64px;height:64px;font-size:22px" data-logo>${logo ? `<img src="${esc(logo)}">` : esc(initials(s.company_name))}</div>
       <div><div class="bold">โลโก้</div><div class="muted small" style="margin-bottom:8px">แสดงบนหน้าแรก เอกสาร และสลิปเงินเดือน (ไม่เกิน 1MB)</div><div class="row"><button type="button" class="btn sm" data-up>อัปโหลดโลโก้</button><button type="button" class="btn sm ghost" data-rm>ลบโลโก้</button><input type="file" accept="image/*" hidden data-file></div></div></div>
       <div class="grid g2">${inp("company_name", "ชื่อบริษัท / ร้าน")}${inp("company_tax_id", "เลขประจำตัวผู้เสียภาษี")}${inp("company_phone", "เบอร์โทร")}</div><label class="field" style="margin-top:14px"><span>ที่อยู่</span><textarea class="input" name="company_address" rows="2">${esc(s.company_address)}</textarea></label></div></div>
+    <div class="card"><div class="card-h"><h3>หมวด & ช่องทาง ของสาขา</h3></div><div class="card-b"><label class="field" style="max-width:520px"><span>การใช้หมวดหมู่ / ช่องทาง / ผู้ขาย / หน่วยนับ</span><select class="input" name="lists_sync_all">${opt("1", "ใช้ร่วมกันทุกสาขา (เพิ่ม/แก้/ลบ ที่ไหนก็มีผลทุกสาขา)", s.lists_sync_all === "1")}${opt("0", "แยกแต่ละสาขา", s.lists_sync_all !== "1")}</select>
+      <div class="field-hint">เปิดใช้ร่วมกันแล้ว ถ้าสาขาเดิมมีหมวดไม่ตรงกัน ให้ไปที่ “หมวด & ช่องทาง” → “คัดลอกจากสาขาหนึ่งไปสาขาอื่น” หนึ่งครั้ง</div></label></div></div>
     <div class="card"><div class="card-h"><h3>เงินเดือน / ประกันสังคม</h3></div><div class="card-b"><div class="grid g3">${inp("sso_rate", "อัตราเงินสมทบ (%)", "", "num")}${inp("sso_min", "ฐานค่าจ้างต่ำสุด (บาท)", "", "num")}${inp("sso_max", "ฐานค่าจ้างสูงสุด (บาท)", "ปี 2569–2571 = 17,500 (หักสูงสุด 875 บาท)", "num")}</div></div></div>
     <div class="card"><div class="card-h"><h3>ความปลอดภัย</h3></div><div class="card-b"><div class="grid g2">${inp("admin_idle_min", "ออกจากระบบผู้ดูแลอัตโนมัติเมื่อไม่ใช้งาน (นาที)", "5–240 นาที · และต้องใส่ User/Password ใหม่ทุกครั้งที่เปิดหน้าผู้ดูแล", "num")}${inp("branch_idle_hours", "ออกจากระบบสาขาอัตโนมัติเมื่อไม่ใช้งาน (ชั่วโมง)", "1–168 ชั่วโมง", "num")}</div></div></div>
     <div class="card"><div class="card-h"><h3>เลขที่เอกสาร</h3></div><div class="card-b"><div class="grid g3">${inp("doc_prefix_income", "คำนำหน้ารายรับ", "เช่น RE2611-0001")}${inp("doc_prefix_expense", "คำนำหน้ารายจ่าย", "เช่น EX2611-0001")}${inp("doc_prefix_invest", "คำนำหน้าสินทรัพย์", "เช่น AS2611-0001")}</div><div class="field-hint" style="margin-top:8px">เลขรันใหม่ทุกเดือน แยกตามสาขา</div></div></div></form>`;

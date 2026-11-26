@@ -13,7 +13,7 @@ const crypto = require("crypto");
 const { Pool } = require("pg");
 
 const PORT = Number(process.env.PORT) || 3000;
-const BUILD_ID = "2.0.0";
+const BUILD_ID = "2.1.0";
 const INIT_ADMIN_USER = String(process.env.ADMIN_USER || "admin").trim();
 const INIT_ADMIN_PASS = String(process.env.ADMIN_PASS || "admin1234");
 const PUBLIC_DIR = path.join(__dirname, "public");
@@ -92,7 +92,7 @@ setInterval(() => { const t = now(); for (const [k, e] of loginFails) if (e.lock
 const DEFAULT_SETTINGS = {
   company_name: "ร้านอาหารของฉัน", company_address: "", company_tax_id: "", company_phone: "", company_logo: "",
   sso_rate: "5", sso_min: "1650", sso_max: "17500",
-  admin_idle_min: "30", branch_idle_hours: "12",
+  admin_idle_min: "30", branch_idle_hours: "12", lists_sync_all: "1",
   doc_prefix_income: "RE", doc_prefix_expense: "EX", doc_prefix_invest: "AS"
 };
 async function getSettings() {
@@ -237,9 +237,9 @@ async function initDb() {
 async function seedLists(branchId, copyFrom) {
   let n = 0;
   if (copyFrom) {
-    const { rows } = await pool.query("SELECT kind, name, is_credit FROM lists WHERE branch_id=$1 ORDER BY sort_order", [copyFrom]);
+    const { rows } = await pool.query("SELECT kind, name, is_credit, fs_group FROM lists WHERE branch_id=$1 ORDER BY sort_order", [copyFrom]);
     if (rows.length) {
-      for (const r of rows) await pool.query("INSERT INTO lists (id,branch_id,kind,name,is_credit,sort_order) VALUES ($1,$2,$3,$4,$5,$6)", [uid(), branchId, r.kind, r.name, !!r.is_credit, now() + (n++)]);
+      for (const r of rows) await pool.query("INSERT INTO lists (id,branch_id,kind,name,is_credit,sort_order,fs_group) VALUES ($1,$2,$3,$4,$5,$6,$7)", [uid(), branchId, r.kind, r.name, !!r.is_credit, ++n, r.fs_group]);
       return;
     }
   }
@@ -616,6 +616,7 @@ route("PUT", "/api/admin/settings", async ctx => {
       v = String(n);
     }
     if (k.startsWith("doc_prefix_") && !/^[A-Za-z0-9-]{1,6}$/.test(v)) throw bad("คำนำหน้าเลขเอกสารใช้ A-Z 0-9 ได้ไม่เกิน 6 ตัว");
+    if (k === "lists_sync_all") v = v === "1" || v === "true" ? "1" : "0";
     await setSetting(k, v);
   }
   await logActivity(ctx, "settings", "แก้ไขการตั้งค่าระบบ");
@@ -808,7 +809,7 @@ route("GET", B + "/lists", async ctx => {
   const out = {}; LIST_KINDS.forEach(k => { out[k] = []; });
   rows.forEach(r => { if (out[r.kind]) out[r.kind].push({ id: r.id, name: r.name, isCredit: !!r.is_credit, openingBalance: r.opening_balance == null ? null : Number(r.opening_balance), openingDate: r.opening_date || "",
     ...(FS_GROUPS[r.kind] ? { fsGroup: FS_GROUPS[r.kind][r.fs_group] ? r.fs_group : "", fsGuess: guessFsGroup(r.kind, r.name) } : {}) }); });
-  return { lists: out, fsGroups: FS_GROUPS };
+  return { lists: out, fsGroups: FS_GROUPS, synced: (await getSettings()).lists_sync_all === "1" };
 });
 route("POST", B + "/lists", async ctx => {
   await needBranch(ctx);
@@ -821,7 +822,10 @@ route("POST", B + "/lists", async ctx => {
   const ob = kind === "payment_channel" && !ctx.body.isCredit && ctx.body.openingBalance !== undefined && ctx.body.openingBalance !== "" ? r2(num(ctx.body.openingBalance, 0)) : null;
   await pool.query("INSERT INTO lists (id,branch_id,kind,name,is_credit,sort_order,opening_balance,opening_date) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
     [id, ctx.branch.id, kind, name, !!ctx.body.isCredit, now(), ob, ob !== null ? (isDate(ctx.body.openingDate) ? ctx.body.openingDate : todayBkk()) : null]);
-  await logActivity(ctx, "list_add", "เพิ่ม " + name, ctx.branch.id);
+  // โหมดใช้ร่วมกันทุกสาขา: เพิ่มให้สาขาอื่นด้วย (ยอดยกมาเป็นของสาขานี้เท่านั้น)
+  const others = (await syncBranchIds(ctx.branch.id)).filter(b => b !== ctx.branch.id);
+  const n = await listOpAll(others, "add", kind, { name, isCredit: !!ctx.body.isCredit });
+  await logActivity(ctx, "list_add", "เพิ่ม " + name + (n ? " (และอีก " + n + " สาขา)" : ""), ctx.branch.id);
   return { ok: true, id };
 });
 const LIST_RENAME_MAP = {
@@ -829,43 +833,128 @@ const LIST_RENAME_MAP = {
   vendor: [["records", "party"]], payment_channel: [["records", "payment_channel"], ["records", "settled_channel"], ["payroll_runs", "payment_channel"], ["transfers", "from_ch"], ["transfers", "to_ch"]],
   stock_category: [["stock_items", "category"]], unit: [["stock_items", "unit"]]
 };
+// เปลี่ยนชื่อรายการในสาขาหนึ่ง + เปลี่ยนชื่อในเอกสารเก่าให้ด้วย ยอดตามหมวดจะได้ไม่แยกเป็นสองชื่อ
+async function renameListIn(bid, kind, oldName, name) {
+  const cur = (await pool.query("SELECT id FROM lists WHERE branch_id=$1 AND kind=$2 AND name=$3", [bid, kind, oldName])).rows[0];
+  if (!cur) return false;
+  const dup = (await pool.query("SELECT id FROM lists WHERE branch_id=$1 AND kind=$2 AND name=$3", [bid, kind, name])).rows[0];
+  if (dup) await pool.query("DELETE FROM lists WHERE id=$1", [cur.id]); // มีชื่อใหม่อยู่แล้ว → รวมเป็นรายการเดียว
+  else await pool.query("UPDATE lists SET name=$1 WHERE id=$2", [name, cur.id]);
+  for (const [t, c] of LIST_RENAME_MAP[kind] || []) await pool.query(`UPDATE ${t} SET ${c}=$1 WHERE branch_id=$2 AND ${c}=$3`, [name, bid, oldName]);
+  if (kind.endsWith("_category")) {
+    const recs = await pool.query("SELECT id, items_json FROM records WHERE branch_id=$1 AND items_json LIKE $2", [bid, "%" + oldName.replace(/[%_]/g, "") + "%"]);
+    for (const r of recs.rows) {
+      let items; try { items = JSON.parse(r.items_json || "[]"); } catch (e) { continue; }
+      let ch = false; items.forEach(it => { if (it.category === oldName) { it.category = name; ch = true; } });
+      if (ch) await pool.query("UPDATE records SET items_json=$1 WHERE id=$2", [JSON.stringify(items), r.id]);
+    }
+  }
+  return true;
+}
+// สาขาที่ต้องทำด้วย: โหมดใช้ร่วมกันทุกสาขา = ทุกสาขา, ไม่ใช่ = สาขานี้สาขาเดียว
+async function syncBranchIds(bid) {
+  const s = await getSettings();
+  if (s.lists_sync_all !== "1") return [bid];
+  return (await pool.query("SELECT id FROM branches ORDER BY sort_order, created_at")).rows.map(r => r.id);
+}
+// ทำคำสั่งเดียวกันกับหลายสาขา โดยจับคู่รายการจาก "ประเภท + ชื่อ" · คืนค่าจำนวนสาขาที่มีการเปลี่ยนแปลง
+async function listOpAll(bids, op, kind, a) {
+  let changed = 0;
+  for (const bid of bids) {
+    const row = a.name ? (await pool.query("SELECT * FROM lists WHERE branch_id=$1 AND kind=$2 AND name=$3", [bid, kind, a.name])).rows[0] : null;
+    if (op === "add") { if (!row) { await pool.query("INSERT INTO lists (id,branch_id,kind,name,is_credit,sort_order,fs_group) VALUES ($1,$2,$3,$4,$5,$6,$7)", [uid(), bid, kind, a.name, !!a.isCredit, now(), a.fsGroup || null]); changed++; } }
+    else if (op === "rename") { if (await renameListIn(bid, kind, a.name, a.newName)) changed++; }
+    else if (op === "delete") { if (row) { await pool.query("DELETE FROM lists WHERE id=$1", [row.id]); changed++; } }
+    else if (op === "credit") { if (row) { await pool.query("UPDATE lists SET is_credit=$1 WHERE id=$2", [!!a.isCredit, row.id]); changed++; } }
+    else if (op === "fs") { if (row) { await pool.query("UPDATE lists SET fs_group=$1 WHERE id=$2", [a.fsGroup, row.id]); changed++; } }
+    else if (op === "order") {
+      const rows = (await pool.query("SELECT id, name FROM lists WHERE branch_id=$1 AND kind=$2 ORDER BY sort_order", [bid, kind])).rows;
+      const pos = n => { const i = a.names.indexOf(n); return i < 0 ? 100000 : i; };
+      rows.sort((x, y) => pos(x.name) - pos(y.name));
+      for (let i = 0; i < rows.length; i++) await pool.query("UPDATE lists SET sort_order=$1 WHERE id=$2", [i + 1, rows[i].id]);
+      changed++;
+    }
+  }
+  return changed;
+}
 route("PUT", B + "/lists/:id", async ctx => {
   await needBranch(ctx, "settings", "edit");
   const cur = await pool.query("SELECT * FROM lists WHERE id=$1 AND branch_id=$2", [ctx.params.id, ctx.branch.id]);
   if (!cur.rows[0]) throw new HttpError(404, "ไม่พบรายการ");
   const L = cur.rows[0];
+  const bids = await syncBranchIds(ctx.branch.id);
+  const many = bids.length > 1 ? " (ทุกสาขา)" : "";
   if (ctx.body.fsGroup !== undefined && FS_GROUPS[L.kind]) {
     const g = FS_GROUPS[L.kind][ctx.body.fsGroup] ? ctx.body.fsGroup : null;
-    await pool.query("UPDATE lists SET fs_group=$1 WHERE id=$2", [g, L.id]);
-    await logActivity(ctx, "list_fs_group", "ตั้งกลุ่มงบการเงินของ " + L.name + " = " + (g ? FS_GROUPS[L.kind][g] : "อัตโนมัติ"), ctx.branch.id);
+    await listOpAll(bids, "fs", L.kind, { name: L.name, fsGroup: g });
+    await logActivity(ctx, "list_fs_group", "ตั้งกลุ่มงบการเงินของ " + L.name + " = " + (g ? FS_GROUPS[L.kind][g] : "อัตโนมัติ") + many, ctx.branch.id);
   }
-  if (ctx.body.isCredit !== undefined) await pool.query("UPDATE lists SET is_credit=$1 WHERE id=$2", [!!ctx.body.isCredit, L.id]);
+  if (ctx.body.isCredit !== undefined) await listOpAll(bids, "credit", L.kind, { name: L.name, isCredit: !!ctx.body.isCredit });
   if (ctx.body.name !== undefined) {
     const name = str(ctx.body.name, 120); if (!name) throw bad("กรุณาใส่ชื่อ");
     if (name !== L.name) {
       const dup = await pool.query("SELECT 1 FROM lists WHERE branch_id=$1 AND kind=$2 AND name=$3", [ctx.branch.id, L.kind, name]);
       if (dup.rows.length) throw bad("มีรายการนี้อยู่แล้ว");
-      await pool.query("UPDATE lists SET name=$1 WHERE id=$2", [name, L.id]);
-      // เปลี่ยนชื่อในรายการเก่าให้ด้วย ยอดตามหมวดจะได้ไม่แยกเป็นสองชื่อ
-      for (const [t, c] of LIST_RENAME_MAP[L.kind] || []) await pool.query(`UPDATE ${t} SET ${c}=$1 WHERE branch_id=$2 AND ${c}=$3`, [name, ctx.branch.id, L.name]);
-      if (L.kind.endsWith("_category")) {
-        const recs = await pool.query("SELECT id, items_json FROM records WHERE branch_id=$1 AND items_json LIKE $2", [ctx.branch.id, "%" + L.name.replace(/[%_]/g, "") + "%"]);
-        for (const r of recs.rows) {
-          let items; try { items = JSON.parse(r.items_json || "[]"); } catch (e) { continue; }
-          let ch = false; items.forEach(it => { if (it.category === L.name) { it.category = name; ch = true; } });
-          if (ch) await pool.query("UPDATE records SET items_json=$1 WHERE id=$2", [JSON.stringify(items), r.id]);
-        }
-      }
+      await listOpAll(bids, "rename", L.kind, { name: L.name, newName: name });
+      await logActivity(ctx, "list_rename", "เปลี่ยนชื่อ " + L.name + " → " + name + many, ctx.branch.id);
     }
   }
-  if (Array.isArray(ctx.body.order)) for (let i = 0; i < ctx.body.order.length; i++) await pool.query("UPDATE lists SET sort_order=$1 WHERE id=$2 AND branch_id=$3", [i + 1, String(ctx.body.order[i]), ctx.branch.id]);
+  if (Array.isArray(ctx.body.order)) {
+    const rows = (await pool.query("SELECT id, name FROM lists WHERE branch_id=$1 AND kind=$2", [ctx.branch.id, L.kind])).rows;
+    const names = ctx.body.order.map(id => (rows.find(r => r.id === String(id)) || {}).name).filter(Boolean);
+    await listOpAll(bids, "order", L.kind, { names });
+  }
   return { ok: true };
 });
 route("DELETE", B + "/lists/:id", async ctx => {
   await needBranch(ctx, "settings", "edit");
-  const { rows } = await pool.query("DELETE FROM lists WHERE id=$1 AND branch_id=$2 RETURNING name", [ctx.params.id, ctx.branch.id]);
-  if (rows[0]) await logActivity(ctx, "list_delete", "ลบ " + rows[0].name, ctx.branch.id);
+  const L = (await pool.query("SELECT * FROM lists WHERE id=$1 AND branch_id=$2", [ctx.params.id, ctx.branch.id])).rows[0];
+  if (!L) return { ok: true };
+  const bids = await syncBranchIds(ctx.branch.id);
+  await listOpAll(bids, "delete", L.kind, { name: L.name });
+  await logActivity(ctx, "list_delete", "ลบ " + L.name + (bids.length > 1 ? " (ทุกสาขา)" : ""), ctx.branch.id);
   return { ok: true };
+});
+// Admin: คัดลอกหมวด/ช่องทาง/ผู้ขาย/หน่วย (และรายการสินค้าสต็อก) จากสาขาหนึ่งไปสาขาอื่น
+route("POST", "/api/admin/lists/copy", async ctx => {
+  needAdmin(ctx);
+  const b = ctx.body || {};
+  const from = str(b.from, 100);
+  const all = (await pool.query("SELECT id, name FROM branches ORDER BY sort_order, created_at")).rows;
+  const src = all.find(x => x.id === from); if (!src) throw bad("กรุณาเลือกสาขาต้นทาง");
+  const targets = (b.to === "all" ? all.map(x => x.id) : (Array.isArray(b.to) ? b.to.map(String) : [])).filter(id => id !== from && all.some(x => x.id === id));
+  if (!targets.length) throw bad("กรุณาเลือกสาขาปลายทางอย่างน้อย 1 สาขา");
+  const kinds = (Array.isArray(b.kinds) ? b.kinds : LIST_KINDS).filter(k => LIST_KINDS.includes(k));
+  const srcRows = (await pool.query("SELECT * FROM lists WHERE branch_id=$1 ORDER BY sort_order", [from])).rows.filter(r => kinds.includes(r.kind));
+  const result = [];
+  for (const tid of targets) {
+    const res = { branch: all.find(x => x.id === tid).name, added: 0, updated: 0, removed: 0, stockAdded: 0 };
+    const cur = (await pool.query("SELECT * FROM lists WHERE branch_id=$1", [tid])).rows;
+    for (let i = 0; i < srcRows.length; i++) {
+      const s = srcRows[i]; const t = cur.find(r => r.kind === s.kind && r.name === s.name);
+      if (!t) { await pool.query("INSERT INTO lists (id,branch_id,kind,name,is_credit,sort_order,fs_group) VALUES ($1,$2,$3,$4,$5,$6,$7)", [uid(), tid, s.kind, s.name, !!s.is_credit, i + 1, s.fs_group]); res.added++; }
+      else { if (!!t.is_credit !== !!s.is_credit || (t.fs_group || null) !== (s.fs_group || null)) res.updated++;
+        await pool.query("UPDATE lists SET is_credit=$1, fs_group=$2, sort_order=$3 WHERE id=$4", [!!s.is_credit, s.fs_group, i + 1, t.id]); }
+    }
+    // รายการที่สาขาปลายทางมีแต่ต้นทางไม่มี: ลบออก (ถ้าเลือก) หรือเก็บไว้ท้ายรายการ — เอกสารเก่ายังเก็บชื่อเดิมไว้
+    for (const t of cur.filter(r => kinds.includes(r.kind) && !srcRows.some(s => s.kind === r.kind && s.name === r.name))) {
+      if (b.removeExtra) { await pool.query("DELETE FROM lists WHERE id=$1", [t.id]); res.removed++; }
+      else await pool.query("UPDATE lists SET sort_order=$1 WHERE id=$2", [100000 + Number(t.sort_order) % 100000, t.id]);
+    }
+    if (b.stockItems) {
+      const items = (await pool.query("SELECT * FROM stock_items WHERE branch_id=$1 AND active=TRUE ORDER BY category, name", [from])).rows;
+      for (const it of items) {
+        const ex = await pool.query("SELECT 1 FROM stock_items WHERE branch_id=$1 AND lower(name)=lower($2)", [tid, it.name]);
+        if (ex.rows.length) continue;
+        await pool.query("INSERT INTO stock_items (id,branch_id,sku,name,category,unit,min_qty,qty,avg_cost,active,note,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,0,0,TRUE,$8,$9,$9)",
+          [uid(), tid, it.sku, it.name, it.category, it.unit, it.min_qty, it.note, now()]);
+        res.stockAdded++;
+      }
+    }
+    result.push(res);
+    await logActivity(ctx, "list_copy", "คัดลอกหมวด/ช่องทางจาก " + src.name + " ไป " + res.branch + ": เพิ่ม " + res.added + ", ปรับ " + res.updated + (b.removeExtra ? ", ลบ " + res.removed : "") + (b.stockItems ? ", สินค้าสต็อกใหม่ " + res.stockAdded : ""), tid);
+  }
+  return { ok: true, from: src.name, result };
 });
 
 /* ================= เอกสารบัญชี (รายรับ / รายจ่าย / สินทรัพย์) ================= */
