@@ -254,3 +254,30 @@ table.tbl { width: 100%; border-collapse: collapse; }
 .sb-branch .branch-dot { min-width: 34px; max-width: 64px; overflow: hidden; font-size: 12px; }
 .seg[data-paid] { display: flex; } .seg[data-paid] button { padding: 7px 8px; }
 .seg[data-paid] button.on:first-child { color: var(--good); } .seg[data-paid] button.on:last-child { color: var(--warn); }
+
+/* ===== v2.0: รายได้เฉลี่ย / ช่องทาง / งบการเงิน / สิทธิ์ / เช็คอิน ===== */
+.avg-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(175px, 1fr)); gap: 10px; }
+.avg-grid .mini-kpi .v { font-size: 16.5px; }
+.wd-tbl td, .wd-tbl th { padding: 7px 12px; }
+.wd-tbl .hbar .tr { height: 9px; }
+.ch-tbl tr.grp td { background: #fbfcfe; padding-top: 12px; padding-bottom: 6px; border-bottom: 0; }
+.ch-tbl tr.sub td { font-weight: 600; color: var(--text-2); background: #fbfcfe; }
+.fs-card { max-width: 860px; }
+.fs td { padding: 8px 14px; }
+.fs tr.subtot td { border-top: 1px solid var(--border-strong); font-weight: 600; }
+.fs tr.tot td { background: var(--surface-2); font-weight: 700; }
+.fs tr.grand td { background: var(--primary-50); font-weight: 700; font-size: 15px; border-top: 2px solid var(--primary); }
+.fs tr.head td { background: #18212f; color: #fff; font-size: 13px; letter-spacing: .02em; }
+.perm-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 6px 18px; }
+.perm-row { display: flex; align-items: center; gap: 10px; padding: 5px 0; border-bottom: 1px solid #f0f2f6; }
+.perm-row .seg button { padding: 4px 9px; font-size: 12.5px; }
+.perm-row .seg button.on.none { color: var(--muted); }
+.perm-row .seg button.on.view { color: var(--primary); }
+.perm-row .seg button.on.edit { color: var(--good); }
+.chip-check { border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; background: #fff; }
+.chip-check:has(input:checked) { border-color: var(--primary); background: var(--primary-50); }
+.ci .auth-card { padding: 24px; }
+.ci-clock { font-size: 44px; font-weight: 700; text-align: center; letter-spacing: .02em; margin: 18px 0 8px; font-variant-numeric: tabular-nums; color: var(--text); }
+.ci-btn { height: 56px !important; font-size: 16px; }
+.toolbar .seg { flex: none; }
+@media (max-width: 860px) { .perm-grid { grid-template-columns: minmax(0, 1fr); } .ci-clock { font-size: 38px; } }

@@ -70,6 +70,14 @@ const IC = {
   inbox: '<path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.5 5.1 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.5-6.9A2 2 0 0 0 16.8 4H7.2a2 2 0 0 0-1.7 1.1z"/>',
   link: '<path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/>',
   wallet: '<path d="M20 7V5a2 2 0 0 0-2-2H5a2 2 0 0 0 0 4h15a1 1 0 0 1 1 1v4h-4a2 2 0 0 0 0 4h4v3a1 1 0 0 1-1 1H5a2 2 0 0 1-2-2V5"/><path d="M17 14h.01"/>',
+  calendar: '<rect x="3" y="4.5" width="18" height="17" rx="2"/><path d="M16 2.5v4M8 2.5v4M3 10h18"/>',
+  clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  cash: '<rect x="2.5" y="6" width="19" height="12" rx="2"/><path d="M12 9.5v5M10 10.5h3a1 1 0 0 1 0 2h-2a1 1 0 0 0 0 2h3"/>',
+  report: '<path d="M4 20V4M4 20h16"/><path d="M8 16v-4M12 16V8M16 16v-6"/>',
+  approve: '<circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-6"/>',
+  pin: '<path d="M12 22s7-6.2 7-12a7 7 0 1 0-14 0c0 5.8 7 12 7 12z"/><circle cx="12" cy="10" r="2.6"/>',
+  userKey: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 10.5-5.1"/><circle cx="17.5" cy="16.5" r="2.5"/><path d="m19.3 18.3 2.2 2.2"/>',
+  copy: '<rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h8"/>',
   up: '<path d="m18 15-6-6-6 6"/>', down: '<path d="m6 9 6 6 6-6"/>', more: '<circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/>'
 };
 const icon = (n, cls) => `<svg class="${cls || ""}" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${IC[n] || ""}</svg>`;
@@ -273,26 +281,47 @@ async function renderLanding() {
   const c = S.info.company;
   document.title = c.name + " · ระบบบัญชี";
   const cards = S.info.branches.map(b => `<button class="branch-card" data-b="${esc(b.id)}"><div class="branch-dot" style="background:${esc(b.color || "#1f6feb")}">${esc(b.code || initials(b.name))}</div>
-      <div><div class="bname">${esc(b.name)}</div><div class="bmeta">${S.branchTokens[b.id] ? `<span class="chip good">เข้าสู่ระบบอยู่</span>` : icon("lock", "") + " ต้องใส่รหัสผ่านสาขา"}</div></div></button>`).join("");
+      <div><div class="bname">${esc(b.name)}</div><div class="bmeta">${S.branchTokens[b.id] ? `<span class="chip good">เข้าสู่ระบบอยู่</span>` : icon("lock", "") + " ต้องเข้าสู่ระบบ"}</div></div></button>`).join("");
   app.innerHTML = `<div class="landing"><div class="landing-inner">
     <div class="landing-head"><div class="brand"><div class="brand-logo">${c.logo ? `<img src="${esc(c.logo)}" alt="">` : esc(initials(c.name))}</div><div><div class="bold" style="font-size:16px">${esc(c.name)}</div><div class="muted small">ระบบบัญชีร้านอาหาร</div></div></div>
       <a class="btn" href="#/admin">${icon("shield")} ผู้ดูแลระบบ (Admin)</a></div>
-    <h1>เลือกสาขาเพื่อเข้าสู่ระบบบัญชี</h1><p class="lead">แต่ละสาขามีบัญชี สต็อก และเงินเดือนแยกกัน และต้องใส่รหัสผ่านของสาขาก่อนเข้าใช้งาน</p>
+    <h1>เลือกสาขาเพื่อเข้าสู่ระบบบัญชี</h1><p class="lead">แต่ละสาขามีบัญชี สต็อก และเงินเดือนแยกกัน — เข้าด้วยชื่อผู้ใช้ของคุณ หรือรหัสผ่านสาขา (ผู้จัดการ)</p>
     ${cards ? `<div class="branch-grid">${cards}</div>` : `<div class="empty-hero">${icon("building")}<h3 style="margin:8px 0 4px">ยังไม่มีสาขา</h3><div>เข้าสู่ระบบผู้ดูแล (Admin) เพื่อสร้างสาขาแรกของร้าน</div><div style="margin-top:16px"><a class="btn primary" href="#/admin">${icon("shield")} ไปหน้าผู้ดูแลระบบ</a></div></div>`}
     <div class="footer-note">ข้อมูลทุกสาขาเข้ารหัสผ่าน · รหัสผ่านถูกเก็บแบบเข้ารหัสทางเดียว (scrypt) · เวอร์ชัน ${esc(S.info.build)}</div></div></div>`;
-  $$("[data-b]").forEach(btn => { btn.onclick = () => { const b = S.info.branches.find(x => x.id === btn.dataset.b); if (S.branchTokens[b.id]) go("#/b/" + b.id + "/dashboard"); else branchLogin(b); }; });
+  $$("[data-b]").forEach(btn => { btn.onclick = () => { const b = S.info.branches.find(x => x.id === btn.dataset.b); if (S.branchTokens[b.id]) go("#/b/" + b.id + "/home"); else branchLogin(b); }; });
 }
 function branchLogin(b) {
-  const m = openModal({ title: "เข้าสู่ระบบสาขา", size: "", body: `<div class="row" style="margin-bottom:16px"><div class="branch-dot" style="background:${esc(b.color || "#1f6feb")}">${esc(b.code || initials(b.name))}</div><div><div class="bold">${esc(b.name)}</div><div class="muted small">ใส่รหัสผ่านของสาขาเพื่อเข้าใช้งาน</div></div></div>
-    <div data-err></div><form data-f><label class="field"><span>รหัสผ่านสาขา</span>${pwInput("password", "••••••")}</label><button class="btn primary" style="width:100%;margin-top:14px;height:42px">${icon("lock")} เข้าสู่ระบบ</button></form>` });
+  let lastUser = ""; try { lastUser = localStorage.getItem("lastUser") || ""; } catch (e) {}
+  const m = openModal({ title: "เข้าสู่ระบบสาขา", size: "", body: `<div class="row" style="margin-bottom:16px"><div class="branch-dot" style="background:${esc(b.color || "#1f6feb")}">${esc(b.code || initials(b.name))}</div><div><div class="bold">${esc(b.name)}</div><div class="muted small">ใส่ชื่อผู้ใช้และรหัสผ่านของคุณ</div></div></div>
+    <div data-err></div><form data-f class="stack"><label class="field"><span>ชื่อผู้ใช้ (User)</span><input class="input" name="username" value="${esc(lastUser)}" autocomplete="username" autocapitalize="off" placeholder="เว้นว่าง = ใช้รหัสสาขา (ผู้จัดการ)"></label>
+    <label class="field"><span>รหัสผ่าน</span>${pwInput("password", "••••••")}</label>
+    <div class="field-hint">ผู้จัดการสาขา: เว้นชื่อผู้ใช้ว่าง แล้วใส่ <b>รหัสผ่านสาขา</b> (สิทธิ์เต็ม)</div>
+    <button class="btn primary" style="width:100%;height:42px">${icon("lock")} เข้าสู่ระบบ</button></form>` });
   bindPwEyes(m.el);
+  if (lastUser) setTimeout(() => $("[name=password]", m.el).focus(), 40);
   $("[data-f]", m.el).onsubmit = async e => {
-    e.preventDefault(); const btn = $("button.primary", m.el);
+    e.preventDefault(); const btn = $("button.primary", m.el); const f = formData(m.el);
     try { await withBtn(btn, async () => {
-      const r = await api("POST", "/api/branch/login", { branchId: b.id, password: $("[name=password]", m.el).value }, { noRedirect: true });
-      S.branchTokens[b.id] = r.token; saveBT(); m.close(); go("#/b/" + b.id + "/dashboard");
+      const r = await api("POST", "/api/branch/login", { branchId: b.id, username: f.username.trim(), password: f.password }, { noRedirect: true });
+      try { localStorage.setItem("lastUser", f.username.trim()); } catch (e2) {}
+      S.branchTokens[b.id] = r.token; saveBT(); S._lastPw = r.mustChange ? f.password : null; S.bid = null; S.binfo = null; m.close(); go("#/b/" + b.id + "/home");
     }); } catch (err) { $("[data-err]", m.el).innerHTML = `<div class="err-box">${esc(err.message)}</div>`; $("[name=password]", m.el).select(); }
   };
+}
+// ผู้ใช้เข้าครั้งแรก / ถูกรีเซ็ตรหัส → ต้องตั้งรหัสใหม่ก่อนใช้งาน
+function userForceChange(bid) {
+  const app = $("#app");
+  app.innerHTML = `<div class="auth-wrap"><div class="auth-card" style="max-width:440px"><div class="auth-icon">${icon("key")}</div><h2>ตั้งรหัสผ่านใหม่ก่อนใช้งาน</h2><p>สวัสดี ${esc(S.binfo.me.name)} — เพื่อความปลอดภัย กรุณาตั้งรหัสผ่านของคุณเอง</p><div data-err></div>
+    <form data-f class="stack">${S._lastPw ? "" : `<label class="field"><span>รหัสผ่านปัจจุบัน (ที่ได้รับจากผู้ดูแล)</span>${pwInput("oldPassword", "", "current-password")}</label>`}
+    <label class="field"><span>รหัสผ่านใหม่ (อย่างน้อย 6 ตัว)</span>${pwInput("newPassword", "", "new-password")}</label><label class="field"><span>ยืนยันรหัสผ่านใหม่</span>${pwInput("confirm", "", "new-password")}</label>
+    <button class="btn primary">${icon("check")} บันทึกและเข้าใช้งาน</button></form><div style="text-align:center;margin-top:16px"><a href="#/" class="small" data-out>← ออก</a></div></div></div>`;
+  bindPwEyes(app);
+  $("[data-out]", app).onclick = e => { e.preventDefault(); leaveBranch(); };
+  $("[data-f]", app).onsubmit = async e => { e.preventDefault(); const f = formData(app); const btn = $("button.primary", app);
+    if (f.newPassword !== f.confirm) { $("[data-err]", app).innerHTML = `<div class="err-box">ยืนยันรหัสผ่านไม่ตรงกัน</div>`; return; }
+    try { await withBtn(btn, async () => { await api("POST", "/api/user/change-password", { oldPassword: S._lastPw || f.oldPassword, newPassword: f.newPassword }, { token: tokenFor(bid) });
+      S._lastPw = null; S.binfo = null; S.bid = null; toast("ตั้งรหัสผ่านใหม่แล้ว"); go("#/b/" + bid + "/home"); }); }
+    catch (err) { $("[data-err]", app).innerHTML = `<div class="err-box">${esc(err.message)}</div>`; } };
 }
 async function leaveBranch() {
   const bid = S.bid;
@@ -310,30 +339,54 @@ const TYPE = {
 };
 function branchNav() {
   const b = "#/b/" + S.bid + "/";
-  return [{ key: "dashboard", label: "ภาพรวม", icon: "dashboard", href: b + "dashboard" },
-    { sec: "บัญชี" }, { key: "income", label: "รายรับ", icon: "income", href: b + "income" }, { key: "expense", label: "รายจ่าย", icon: "expense", href: b + "expense" },
-    { key: "invest", label: "สินทรัพย์ / งบลงทุน", icon: "invest", href: b + "invest" }, { key: "ledger", label: "สมุดบัญชี / รายงาน", icon: "ledger", href: b + "ledger" },
-    { key: "accounts", label: "เงินในบัญชี / ยอดคงเหลือ", icon: "wallet", href: b + "accounts" },
-    { sec: "สต็อก" }, { key: "stock", label: "สต็อกสินค้า", icon: "stock", href: b + "stock" },
-    { sec: "บุคลากร" }, { key: "employees", label: "พนักงาน", icon: "users", href: b + "employees" }, { key: "payroll", label: "เงินเดือน & สลิป", icon: "payroll", href: b + "payroll" },
-    { sec: "ตั้งค่า" }, { key: "settings", label: "หมวด & ช่องทาง", icon: "settings", href: b + "settings" },
-    { key: "password", label: "เปลี่ยนรหัสผ่านสาขา", icon: "key", href: b + "password" }];
+  const all = [{ key: "dashboard", label: "ภาพรวม", icon: "dashboard" },
+    { key: "approvals", label: "รออนุมัติ", icon: "approve", show: anyApprover(), badge: S.pending && S.pending.total },
+    { sec: "บัญชี" }, { key: "income", label: "รายรับ", icon: "income" }, { key: "expense", label: "รายจ่าย", icon: "expense" },
+    { key: "invest", label: "สินทรัพย์ / งบลงทุน", icon: "invest" }, { key: "ledger", label: "สมุดบัญชี / รายงาน", icon: "ledger" },
+    { key: "accounts", label: "เงินในบัญชี / ยอดคงเหลือ", icon: "wallet" }, { key: "statements", label: "งบการเงิน (P&L / BS)", icon: "report" },
+    { sec: "สต็อก" }, { key: "stock", label: "สต็อกสินค้า", icon: "stock", badge: approver("stock") && S.pending && S.pending.stock },
+    { sec: "บุคลากร" }, { key: "employees", label: "พนักงาน", icon: "users" }, { key: "payroll", label: "เงินเดือน & สลิป", icon: "payroll" },
+    { key: "leave", label: "ขาด-ลา", icon: "calendar", badge: approver("leave") && S.pending && S.pending.leave },
+    { key: "advance", label: "เบิกเงินล่วงหน้า", icon: "cash", badge: approver("advance") && S.pending && S.pending.advance },
+    { key: "attendance", label: "ลงเวลา / เช็คอิน", icon: "clock" },
+    { sec: "ตั้งค่า" }, { key: "settings", label: "หมวด & ช่องทาง", icon: "settings" }, { key: "log", label: "Log การใช้งาน", icon: "history" },
+    { key: "password", label: S.binfo && S.binfo.me.kind === "user" ? "เปลี่ยนรหัสผ่านของฉัน" : "เปลี่ยนรหัสผ่านสาขา", icon: "key", show: true }];
+  const vis = all.filter(n => n.sec || (n.show !== undefined ? n.show : canView(n.key))).map(n => n.sec ? n : { ...n, href: b + n.key });
+  return vis.filter((n, i) => !n.sec || (vis[i + 1] && !vis[i + 1].sec)); // ซ่อนหัวข้อที่ไม่มีเมนู
 }
 const BRANCH_PAGES = {};
+const pageAllowed = p => p === "password" || (p === "approvals" ? anyApprover() : canView(p));
+async function refreshPending() { try { S.pending = anyApprover() ? await bapi("GET", "/approvals/count") : null; } catch (e) { S.pending = null; } }
 async function renderBranch(bid, page, rest) {
   if (!tokenFor(bid)) { S.info = S.info || await api("GET", "/api/public/info").catch(() => null); go("#/"); const b = S.info && S.info.branches.find(x => x.id === bid); if (b) setTimeout(() => branchLogin(b), 60); return; }
   if (S.bid !== bid || !S.binfo) {
     S.bid = bid; S.binfo = null; S.lists = null; S.stockItems = null; S.emps = null;
-    try { S.binfo = await bapi("GET", "/info"); S.lists = (await bapi("GET", "/lists")).lists; } catch (e) { if (e.status !== 401) $("#app").innerHTML = `<div class="auth-wrap"><div class="auth-card"><div class="err-box">${esc(e.message)}</div><a class="btn" href="#/">กลับหน้าแรก</a></div></div>`; return; }
+    try { S.binfo = await bapi("GET", "/info"); if (!S.binfo.me.mustChange) S.lists = (await bapi("GET", "/lists")).lists; } catch (e) { if (e.status !== 401) $("#app").innerHTML = `<div class="auth-wrap"><div class="auth-card"><div class="err-box">${esc(e.message)}</div><a class="btn" href="#/">กลับหน้าแรก</a></div></div>`; return; }
   }
+  if (S.binfo.me.mustChange) return userForceChange(bid);
+  if (page === "home" || !BRANCH_PAGES[page] || !pageAllowed(page)) {
+    const first = branchNav().find(n => !n.sec && n.key !== "password" && BRANCH_PAGES[n.key]);
+    if (page !== "home" && BRANCH_PAGES[page]) toast("คุณไม่มีสิทธิ์เข้าเมนูนี้", "bad");
+    location.replace("#/b/" + bid + "/" + (first ? first.key : "password")); return;
+  }
+  await refreshPending();
   document.title = S.binfo.branch.name + " · ระบบบัญชี";
-  const P = BRANCH_PAGES[page] || BRANCH_PAGES.dashboard;
-  const c = shell({ kind: "branch", nav: branchNav(), active: P.nav || page, title: P.title(rest), crumb: S.binfo.branch.name });
+  const P = BRANCH_PAGES[page];
+  const me = S.binfo.me;
+  const c = shell({ kind: "branch", nav: branchNav(), active: P.nav || page, title: P.title(rest), crumb: S.binfo.branch.name,
+    headRight: `<div class="user-chip" title="${esc(me.username)}"><div class="av">${esc(initials(me.name))}</div><span>${esc(me.name)}</span></div>` });
   try { await P.render(c, rest); } catch (e) { if (e.status !== 401) c.innerHTML = `<div class="err-box">${esc(e.message)}</div>`; }
 }
 async function loadStockItems(force) { if (!S.stockItems || force) S.stockItems = (await bapi("GET", "/stock/items")).items; return S.stockItems; }
 const listNames = k => (S.lists && S.lists[k] ? S.lists[k].map(x => x.name) : []);
 const isCreditChannel = n => !!(S.lists && S.lists.payment_channel.find(x => x.name === n && x.isCredit));
+// สิทธิ์ของผู้ใช้ในสาขาปัจจุบัน (เซิร์ฟเวอร์ตรวจซ้ำทุก API)
+const LVL = { none: 0, view: 1, edit: 2 };
+const permOf = m => (S.binfo && S.binfo.perms && S.binfo.perms[m]) || "none";
+const canView = m => (Array.isArray(m) ? m : [m]).some(x => LVL[permOf(x)] >= 1);
+const canEdit = m => (Array.isArray(m) ? m : [m]).some(x => LVL[permOf(x)] >= 2);
+const approver = k => !!(S.binfo && S.binfo.approve && S.binfo.approve[k]);
+const anyApprover = () => approver("stock") || approver("leave") || approver("advance");
 
 /* ---------- dashboard ---------- */
 BRANCH_PAGES.dashboard = { title: () => "ภาพรวม", async render(c) {
@@ -355,6 +408,8 @@ BRANCH_PAGES.dashboard = { title: () => "ภาพรวม", async render(c) {
     </div>
     ${s.accounts && s.accounts.length ? `<div class="card" style="margin-bottom:14px"><div class="card-h"><h3 class="grow">เงินคงเหลือในแต่ละบัญชี (ณ วันนี้)</h3><span class="bold num">${baht(s.accounts.reduce((a, x) => a + x.balance, 0))}</span><a class="btn sm" href="#/b/${S.bid}/accounts">ดูรายละเอียด</a></div>
       <div class="card-b"><div class="acc-tiles">${s.accounts.map(a => `<a class="mini-kpi" href="#/b/${S.bid}/accounts" style="color:inherit"><div class="l">${esc(a.name)}</div><div class="v ${a.balance < 0 ? "neg" : ""}">${baht(a.balance)}</div>${a.openingBalance == null ? `<div class="small muted">ยังไม่ได้ตั้งยอดยกมา</div>` : ""}</a>`).join("")}</div></div></div>` : ""}
+    ${avgCard(s)}
+    ${channelCard(s)}
     <div class="dash-grid">
       <div class="card"><div class="card-h"><h3 class="grow">รายรับ – รายจ่าย ${s.group === "month" ? "รายเดือน" : "รายวัน"}</h3><div class="legend"><span><i style="background:#257de0"></i>รายรับ</span><span><i style="background:#f47230"></i>รายจ่าย</span></div></div><div class="card-b" data-chart></div></div>
       <div class="card"><div class="card-h"><h3 class="grow">ค้างรับ / ค้างจ่าย</h3><span class="muted small">ทุกช่วงเวลา</span></div>
@@ -380,17 +435,54 @@ BRANCH_PAGES.dashboard = { title: () => "ภาพรวม", async render(c) {
   $$("[data-open]", c).forEach(el => { el.onclick = () => openDoc(el.dataset.type, el.dataset.open, () => BRANCH_PAGES.dashboard.render(c)); });
 } };
 
+// รายได้เฉลี่ย (แบบเดียวกับ POS)
+function avgCard(s) {
+  const a = s.averages; if (!a) return "";
+  const wmax = Math.max(1, ...a.byWeekday.map(w => w.avgPerIncomeDay));
+  const kp = (l, v, sub, cls) => `<div class="mini-kpi"><div class="l">${l}</div><div class="v ${cls || ""}">${v}</div>${sub ? `<div class="small muted">${sub}</div>` : ""}</div>`;
+  return `<div class="card" style="margin-bottom:14px"><div class="card-h"><h3 class="grow">รายได้เฉลี่ย</h3><span class="muted small">${a.partial ? "ช่วงนี้ยังไม่จบ — นับถึงวันนี้ " + thDate(a.countedTo, true) + " · " : ""}${a.calendarDays} วันตามปฏิทิน · มีรายรับ ${a.incomeDays} วัน</span></div>
+    <div class="card-b"><div class="avg-grid">
+      ${kp("เฉลี่ยต่อวันที่มีรายรับ", baht(a.perIncomeDay), "รายรับ ÷ " + a.incomeDays + " วันที่มีรายรับ")}
+      ${kp("เฉลี่ยต่อวัน (ตามปฏิทิน)", baht(a.perCalendarDay), "รายรับ ÷ " + a.calendarDays + " วัน")}
+      ${kp("ค่าใช้จ่ายเฉลี่ยต่อวัน", baht(a.expensePerDay), "รายจ่าย ÷ " + a.calendarDays + " วัน")}
+      ${kp("กำไรเฉลี่ยต่อวัน", baht(a.profitPerDay), "", a.profitPerDay < 0 ? "neg" : "")}
+      ${kp("ยอดเฉลี่ยต่อเอกสารรายรับ", baht(a.perIncomeDoc), a.incomeDocs + " เอกสาร")}
+      ${kp("วันที่รายรับสูงสุด", a.best ? baht(a.best.total) : "-", a.best ? thDate(a.best.date) + " (" + wdName(a.best.date) + ")" : "")}
+      ${kp("วันที่รายรับต่ำสุด", a.worst ? baht(a.worst.total) : "-", a.worst ? thDate(a.worst.date) + " (" + wdName(a.worst.date) + ")" : "")}
+    </div>
+    <div class="section-t" style="margin-top:16px">ค่าเฉลี่ยแยกตามวันในสัปดาห์</div>
+    <div class="tbl-wrap"><table class="tbl wd-tbl"><thead><tr><th>วัน</th><th style="width:40%"></th><th class="num">เฉลี่ย/วันที่มีรายรับ</th><th class="num">เฉลี่ย/วันตามปฏิทิน</th><th class="num">วันที่มีรายรับ</th><th class="num">รวม</th></tr></thead><tbody>
+      ${a.byWeekday.map(w => `<tr><td class="bold">${w.name}</td><td><div class="hbar" style="grid-template-columns:1fr;padding:0"><div class="tr"><div class="fl" style="width:${Math.max(w.avgPerIncomeDay ? 2 : 0, w.avgPerIncomeDay / wmax * 100)}%;background:#257de0"></div></div></div></td>
+        <td class="num bold">${fmt(w.avgPerIncomeDay)}</td><td class="num">${fmt(w.avgPerCalDay)}</td><td class="num muted">${w.incomeDays} / ${w.calDays}</td><td class="num">${fmt(w.total)}</td></tr>`).join("")}</tbody></table></div></div></div>`;
+}
+const wdName = iso => ["อาทิตย์", "จันทร์", "อังคาร", "พุธ", "พฤหัสบดี", "ศุกร์", "เสาร์"][new Date(iso + "T00:00:00Z").getUTCDay()];
+// สรุปแยกตามช่องทางรับ/ชำระเงิน
+function channelCard(s) {
+  const ch = s.channels || []; if (!ch.length) return "";
+  const G = { cash: ["ช่องทางรับ-จ่ายเงินจริง", ""], credit: ["ช่องทางเครดิต (ยังไม่ตัดเงินจริง — รอชำระ)", "warn"], unsettled: ["ยังค้าง / ยังไม่ระบุช่องทาง", "bad"] };
+  const sum = (arr, k) => arr.reduce((a, x) => a + x[k], 0);
+  let body = "";
+  ["cash", "credit", "unsettled"].forEach(g => { const rows = ch.filter(x => x.group === g); if (!rows.length) return;
+    body += `<tr class="grp"><td colspan="5"><span class="chip ${G[g][1] || "blue"} plain">${G[g][0]}</span></td></tr>` + rows.map(x => `<tr><td style="padding-left:24px">${esc(x.name)}<div class="muted small">${x.incomeCount ? x.incomeCount + " รับ" : ""}${x.incomeCount && x.outCount ? " · " : ""}${x.outCount ? x.outCount + " จ่าย" : ""}</div></td>
+      <td class="num pos">${x.income ? fmt(x.income) : "-"}</td><td class="num neg">${x.out ? fmt(x.out) : "-"}</td><td class="num bold ${x.net < 0 ? "neg" : ""}">${fmt(x.net)}</td><td class="num muted">${x.count}</td></tr>`).join("")
+      + (rows.length > 1 ? `<tr class="sub"><td style="padding-left:24px">รวม${G[g][0].split(" (")[0]}</td><td class="num">${fmt(sum(rows, "income"))}</td><td class="num">${fmt(sum(rows, "out"))}</td><td class="num">${fmt(sum(rows, "net"))}</td><td></td></tr>` : ""); });
+  return `<div class="card" style="margin-bottom:14px"><div class="card-h"><h3 class="grow">สรุปตามช่องทางรับ / ชำระเงิน</h3><span class="muted small">จากเอกสารในช่วงที่เลือก · จ่าย = รายจ่าย + สินทรัพย์</span></div>
+    <div class="tbl-wrap"><table class="tbl ch-tbl"><thead><tr><th>ช่องทาง</th><th class="num">รับเงิน</th><th class="num">จ่ายเงิน</th><th class="num">สุทธิ</th><th class="num">เอกสาร</th></tr></thead><tbody>${body}</tbody>
+    <tfoot><tr><td>รวมทั้งหมด</td><td class="num">${fmt(sum(ch, "income"))}</td><td class="num">${fmt(sum(ch, "out"))}</td><td class="num">${fmt(sum(ch, "net"))}</td><td class="num">${sum(ch, "count")}</td></tr></tfoot></table></div>
+    <div class="field-hint" style="padding:8px 18px 14px">เอกสารที่ค้างแล้วกด “ชำระแล้ว” จะนับในบัญชีที่ใช้ชำระจริง · ช่องทางเครดิต (เช่น บัตรเครดิต แอปเดลิเวอรี่รอโอน) และรายการค้าง แยกไว้ด้านล่างเพราะเงินยังไม่เข้า/ออกจริง</div></div>`;
+}
+
 /* ---------- document list (income / expense / invest) ---------- */
 function docListPage(type) {
   return { title: () => TYPE[type].th, nav: type, state: { q: "", status: "all" }, async render(c) {
     const T = TYPE[type], st = this.state, self = this;
-    c.innerHTML = `<div class="page-head"><div class="grow"><h2>${T.th}</h2></div>${rangeBar()}<button class="btn primary" data-new>${icon("plus")} ${T.new}</button></div>
+    c.innerHTML = `<div class="page-head"><div class="grow"><h2>${T.th}</h2>${canEdit(type) ? "" : `<div class="muted small">ดูอย่างเดียว</div>`}</div>${rangeBar()}${canEdit(type) ? `<button class="btn primary" data-new>${icon("plus")} ${T.new}</button>` : ""}</div>
       <div class="pay-grid" data-kpi style="margin-bottom:14px"></div>
       <div class="card"><div class="toolbar"><div class="search">${icon("search")}<input class="input" placeholder="ค้นหาเลขที่ ชื่อ รายการ…" value="${esc(st.q)}" data-q></div>
         <div class="seg" data-status>${[["all", "ทั้งหมด"], ["unsettled", "ค้างชำระ"], ["settled", "ชำระแล้ว"]].map(([k, l]) => `<button data-s="${k}" class="${st.status === k ? "on" : ""}">${l}</button>`).join("")}</div>
         <div class="grow"></div><button class="btn sm" data-csv>${icon("download")} Excel (CSV)</button></div><div class="tbl-wrap" data-tbl><div class="boot" style="height:200px"><div class="spinner"></div></div></div></div>`;
     bindRange(c, () => self.render(c));
-    $("[data-new]", c).onclick = () => openDoc(type, null, () => self.render(c));
+    if ($("[data-new]", c)) $("[data-new]", c).onclick = () => openDoc(type, null, () => self.render(c));
     const data = (await bapi("GET", "/records?type=" + type + "&" + rq())).records;
     const draw = () => {
       const q = st.q.toLowerCase();
@@ -415,6 +507,7 @@ function docListPage(type) {
 }
 function statusChip(r) {
   if (r.source === "payroll" && !r.dueDate) return `<span class="chip blue">จากระบบเงินเดือน</span>`;
+  if (r.source === "advance" && !r.dueDate) return `<span class="chip blue">เบิกเงินล่วงหน้า</span>`;
   if (!r.dueDate) return `<span class="chip good">ชำระแล้ว</span>`;
   if (r.settledAt) return `<span class="chip good">ชำระแล้ว ${thDate(r.settledDate, true)}</span>`;
   return r.dueDate < today() ? `<span class="chip bad">เลยกำหนด ${thDate(r.dueDate, true)}</span>` : `<span class="chip warn">ครบ ${thDate(r.dueDate, true)}</span>`;
@@ -457,7 +550,7 @@ async function openDoc(type, id, onSaved) {
   if (id) { try { d = (await bapi("GET", "/records/" + id)).record; } catch (e) { return toast(e.message, "bad"); } }
   else d = { type, date: today(), party: "", description: "", paymentChannel: listNames("payment_channel")[0] || "", dueDate: "", items: [{ name: "", category: listNames(T.cat)[0] || "", qty: 1, unit: "", price: "" }], discountType: "baht", discountValue: 0, vatMode: "none", note: "", files: [] };
   d.items = d.items.map(i => ({ ...i }));
-  const ro = d.source === "payroll";
+  const ro = d.source === "payroll" || d.source === "advance" || !canEdit(type);
   if (type !== "income") await loadStockItems().catch(() => {});
   const pending = [];
   let cats = listNames(T.cat), chans = listNames("payment_channel");
@@ -477,7 +570,7 @@ async function openDoc(type, id, onSaved) {
     <td class="num bold" style="width:120px;padding-top:12px" data-amt>${fmt(num(it.qty) * num(it.price))}</td>
     <td style="width:36px">${ro ? "" : `<button class="btn ghost sm icon" data-rm title="ลบบรรทัด">${icon("trash")}</button>`}</td></tr>`;
   const body = `
-    ${ro ? `<div class="info-box" style="margin-bottom:14px">เอกสารนี้สร้างอัตโนมัติจากระบบเงินเดือน — แก้ไขหรือยกเลิกได้ที่เมนู “เงินเดือน & สลิป”</div>` : ""}
+    ${d.source === "payroll" ? `<div class="info-box" style="margin-bottom:14px">เอกสารนี้สร้างอัตโนมัติจากระบบเงินเดือน — แก้ไขหรือยกเลิกได้ที่เมนู “เงินเดือน & สลิป”</div>` : d.source === "advance" ? `<div class="info-box" style="margin-bottom:14px">เอกสารนี้สร้างอัตโนมัติจากการอนุมัติเบิกเงินล่วงหน้า — ยกเลิกได้ที่เมนู “เบิกเงินล่วงหน้า”</div>` : ro ? `<div class="info-box" style="margin-bottom:14px">คุณมีสิทธิ์ดูอย่างเดียว</div>` : ""}
     <div class="grid g2">
       <label class="field"><span>วันที่เอกสาร <em>*</em></span><input type="date" class="input" name="date" value="${esc(d.date)}" ${ro ? "readonly" : ""}></label>
       <label class="field"><span>${T.party}</span><input class="input" name="party" value="${esc(d.party)}" list="vendor-dl" placeholder="${type === "income" ? "เช่น ลูกค้าหน้าร้าน, Grab" : "เช่น แม็คโคร"}" ${ro ? "readonly" : ""}></label>
@@ -495,7 +588,7 @@ async function openDoc(type, id, onSaved) {
     <div class="doc-sum"><div class="stack">
       <label class="field"><span>หมายเหตุ</span><textarea class="input" name="note" rows="2" ${ro ? "readonly" : ""}>${esc(d.note)}</textarea></label>
       <div><div class="section-t">ไฟล์แนบ (ใบเสร็จ / สลิป / รูปภาพ / PDF)</div><div class="files" data-files></div><input type="file" accept="image/*,application/pdf" multiple hidden data-fileinput></div>
-      ${id && d.dueDate ? `<div class="row wrap" data-settle>${d.settledAt ? `<span class="chip good">${W.paid}เมื่อ ${thDate(d.settledDate)}${d.settledChannel ? " · " + esc(d.settledChannel) : ""}</span><button class="btn sm" data-unsettle>ยกเลิกสถานะชำระแล้ว</button>` : `${statusChip(d)}<input type="date" class="input sm" style="width:150px" value="${today()}" data-settledate><select class="input sm" style="width:190px" data-settlech>${opt("", "— " + (type === "income" ? "เข้าบัญชีไหน" : "จ่ายจากบัญชีไหน") + " —")}${chans.filter(n => !isCreditChannel(n)).map(n => opt(n)).join("")}</select><button class="btn sm primary" data-dosettle>${icon("check")} บันทึกว่า${W.settle}แล้ว</button>`}</div>` : ""}
+      ${id && d.dueDate && canEdit(type) ? `<div class="row wrap" data-settle>${d.settledAt ? `<span class="chip good">${W.paid}เมื่อ ${thDate(d.settledDate)}${d.settledChannel ? " · " + esc(d.settledChannel) : ""}</span><button class="btn sm" data-unsettle>ยกเลิกสถานะชำระแล้ว</button>` : `${statusChip(d)}<input type="date" class="input sm" style="width:150px" value="${today()}" data-settledate><select class="input sm" style="width:190px" data-settlech>${opt("", "— " + (type === "income" ? "เข้าบัญชีไหน" : "จ่ายจากบัญชีไหน") + " —")}${chans.filter(n => !isCreditChannel(n)).map(n => opt(n)).join("")}</select><button class="btn sm primary" data-dosettle>${icon("check")} บันทึกว่า${W.settle}แล้ว</button>`}</div>` : ""}
     </div>
     <div class="sum-box">
       <div class="sum-row"><span>รวมเป็นเงิน</span><b class="num" data-sub></b></div>
@@ -633,18 +726,18 @@ BRANCH_PAGES.ledger = { title: () => "สมุดบัญชี / รายง
 BRANCH_PAGES.accounts = { title: () => "เงินในบัญชี / ยอดคงเหลือ", async render(c) {
   const self = this;
   c.innerHTML = `<div class="page-head"><div class="grow"><h2>เงินในบัญชี</h2><div class="muted small">ยอดคงเหลือของเงินสดและบัญชีธนาคารแต่ละบัญชี คำนวณจากยอดยกมา + รับ − จ่าย + โอนระหว่างบัญชี</div></div>
-    ${rangeBar()}<button class="btn" data-transfer>${icon("link")} โอนระหว่างบัญชี</button><button class="btn primary" data-add>${icon("plus")} เพิ่มบัญชี</button></div><div data-body><div class="boot" style="height:240px"><div class="spinner"></div></div></div>`;
+    ${rangeBar()}${canEdit("accounts") ? `<button class="btn" data-transfer>${icon("link")} โอนระหว่างบัญชี</button><button class="btn primary" data-add>${icon("plus")} เพิ่มบัญชี</button>` : ""}</div><div data-body><div class="boot" style="height:240px"><div class="spinner"></div></div></div>`;
   bindRange(c, () => self.render(c));
-  $("[data-add]", c).onclick = async () => { if (await quickAddList("payment_channel")) self.render(c); };
+  if ($("[data-add]", c)) $("[data-add]", c).onclick = async () => { if (await quickAddList("payment_channel")) self.render(c); };
   const a = await bapi("GET", "/accounts?" + rq());
-  $("[data-transfer]", c).onclick = () => transferModal(a.accounts.filter(x => !x.orphan), () => self.render(c));
+  if ($("[data-transfer]", c)) $("[data-transfer]", c).onclick = () => transferModal(a.accounts.filter(x => !x.orphan), () => self.render(c));
   const card = x => `<div class="card acc-card"><div class="card-b">
       <div class="row"><div class="acc-ic">${icon(/สด/.test(x.name) ? "payroll" : "building")}</div><div class="grow"><div class="bold">${esc(x.name)}</div>
         <div class="muted small">${x.orphan ? "ชื่อนี้ไม่อยู่ในรายการช่องทางแล้ว" : x.openingBalance == null ? `<span style="color:var(--warn)">ยังไม่ได้ตั้งยอดยกมา</span>` : "ยอดยกมา " + baht(x.openingBalance) + " ณ " + thDate(x.openingDate, true)}</div></div></div>
       <div class="acc-bal ${x.balance < 0 ? "neg" : ""}">${baht(x.balance)}</div>
       <div class="row small" style="justify-content:space-between"><span class="pos">รับเข้า ${baht(x.periodIn)}</span><span class="neg">จ่ายออก ${baht(x.periodOut)}</span></div>
       <div class="muted small" style="margin-top:2px">ช่วง ${thDate(S.range.from, true)} – ${thDate(S.range.to, true)}</div>
-      <div class="row" style="margin-top:12px"><button class="btn sm grow" data-st="${esc(x.name)}">${icon("ledger")} รายการเดินบัญชี</button>${x.orphan ? "" : `<button class="btn sm" data-ob="${x.id}">ตั้งยอดยกมา</button>`}</div></div></div>`;
+      <div class="row" style="margin-top:12px"><button class="btn sm grow" data-st="${esc(x.name)}">${icon("ledger")} รายการเดินบัญชี</button>${x.orphan || !canEdit("accounts") ? "" : `<button class="btn sm" data-ob="${x.id}">ตั้งยอดยกมา</button>`}</div></div></div>`;
   $("[data-body]", c).innerHTML = `
     <div class="pay-grid" style="margin-bottom:14px"><div class="mini-kpi"><div class="l">เงินรวมทุกบัญชี (ณ วันนี้)</div><div class="v ${a.total < 0 ? "neg" : ""}" style="color:${a.total < 0 ? "" : "var(--primary)"}">${baht(a.total)}</div></div>
       <div class="mini-kpi"><div class="l">ค้างรับ (ลูกค้า/แอปยังไม่โอน)</div><div class="v">${baht(a.receivable)}</div></div><div class="mini-kpi"><div class="l">ค้างจ่าย (รวมบัตรเครดิต)</div><div class="v">${baht(a.payable)}</div></div>
@@ -676,7 +769,7 @@ async function statementModal(name, after) {
   const label = { income: "รายรับ", expense: "รายจ่าย", invest: "สินทรัพย์", transfer: "โอน" };
   const rowsHtml = st.rows.map(r => `<tr class="${r.recordId ? "click" : ""}" ${r.recordId ? `data-rec="${r.recordId}" data-type="${r.kind}"` : ""}><td>${thDate(r.date, true)}</td><td>${r.docNo ? `<span class="doc">${esc(r.docNo)}</span>` : `<span class="chip blue plain">${label[r.kind]}</span>`}</td>
     <td><div class="desc">${esc(r.text)}</div>${r.settle ? `<div class="muted small">ชำระรายการค้าง</div>` : ""}</td><td class="num pos">${r.amount > 0 ? fmt(r.amount) : ""}</td><td class="num neg">${r.amount < 0 ? fmt(-r.amount) : ""}</td><td class="num bold">${fmt(r.balance)}</td>
-    <td>${r.transferId ? `<button class="btn ghost sm icon" data-deltr="${r.transferId}" title="ลบรายการโอน">${icon("trash")}</button>` : ""}</td></tr>`).join("");
+    <td>${r.transferId && canEdit("accounts") ? `<button class="btn ghost sm icon" data-deltr="${r.transferId}" title="ลบรายการโอน">${icon("trash")}</button>` : ""}</td></tr>`).join("");
   const tbl = `<table class="tbl"><thead><tr><th>วันที่</th><th>เอกสาร</th><th>รายละเอียด</th><th class="num">เงินเข้า</th><th class="num">เงินออก</th><th class="num">คงเหลือ</th><th></th></tr></thead><tbody>
     <tr><td>${thDate(S.range.from, true)}</td><td colspan="4" class="muted">ยอดยกมาต้นงวด${st.openingDate && st.openingDate > S.range.from ? " (ตั้งยอดยกมาเมื่อ " + thDate(st.openingDate, true) + ")" : ""}</td><td class="num bold">${fmt(st.startBalance)}</td><td></td></tr>${rowsHtml}</tbody>
     <tfoot><tr><td colspan="3">ยอดคงเหลือปลายงวด · ${st.rows.length} รายการ</td><td class="num">${fmt(st.rows.filter(r => r.amount > 0).reduce((a, r) => a + r.amount, 0))}</td><td class="num">${fmt(-st.rows.filter(r => r.amount < 0).reduce((a, r) => a + r.amount, 0))}</td><td class="num">${fmt(st.endBalance)}</td><td></td></tr></tfoot></table>`;
@@ -690,13 +783,17 @@ async function statementModal(name, after) {
 
 /* ---------- stock ---------- */
 const MOVE = { in: { th: "รับเข้า", chip: "good", sign: "+" }, out: { th: "เบิกใช้", chip: "blue", sign: "−" }, waste: { th: "ของเสีย / ทิ้ง", chip: "bad", sign: "−" }, count: { th: "ตรวจนับ", chip: "warn", sign: "±" } };
-BRANCH_PAGES.stock = { title: () => "สต็อกสินค้า", state: { tab: "items", q: "", cat: "", low: false, kind: "" }, async render(c) {
+const MSTATUS = { pending: ["รออนุมัติ", "warn"], approved: ["อนุมัติแล้ว", "good"], rejected: ["ไม่อนุมัติ", "bad"] };
+BRANCH_PAGES.stock = { title: () => "สต็อกสินค้า", state: { tab: "items", q: "", cat: "", low: false, kind: "", mstatus: "" }, async render(c) {
   const st = this.state, self = this;
+  const ed = canEdit("stock");
   c.innerHTML = `<div class="page-head"><div class="grow"><h2>สต็อกสินค้า / วัตถุดิบ</h2><div class="muted small">ต้นทุนคิดแบบถัวเฉลี่ยถ่วงน้ำหนัก · ซื้อผ่านเอกสารรายจ่ายที่ “ผูกสต็อก” จะรับเข้าสต็อกให้อัตโนมัติ</div></div>
-    <button class="btn" data-mv="in">${icon("income")} รับเข้า</button><button class="btn" data-mv="out">${icon("expense")} เบิกใช้</button><button class="btn" data-mv="waste">${icon("trash")} ของเสีย</button><button class="btn" data-mv="count">${icon("check")} ตรวจนับ</button><button class="btn primary" data-newitem>${icon("plus")} เพิ่มสินค้า</button></div>
+    ${ed ? `<button class="btn" data-mv="in">${icon("income")} รับเข้า</button><button class="btn" data-mv="out">${icon("expense")} เบิกใช้</button><button class="btn" data-mv="waste">${icon("trash")} ของเสีย</button><button class="btn" data-mv="count">${icon("check")} ตรวจนับ</button><button class="btn primary" data-newitem>${icon("plus")} เพิ่มสินค้า</button>` : ""}</div>
+    ${ed && !approver("stock") ? `<div class="warn-box" style="margin-bottom:14px">การรับเข้า / เบิก / ของเสีย / ตรวจนับ / ยอดยกมา ที่คุณบันทึก จะเป็น <b>“รออนุมัติ”</b> และยังไม่กระทบยอดคงเหลือ จนกว่าผู้จัดการหรือเจ้าของจะอนุมัติ</div>` : ""}
+    ${approver("stock") && S.pending && S.pending.stock ? `<div class="info-box row" style="margin-bottom:14px"><span class="grow">มีรายการสต็อกรออนุมัติ <b>${S.pending.stock}</b> รายการ</span><a class="btn sm primary" href="#/b/${S.bid}/approvals">ไปหน้ารออนุมัติ</a></div>` : ""}
     <div class="tabs"><button data-tab="items" class="${st.tab === "items" ? "on" : ""}">สินค้าคงเหลือ</button><button data-tab="moves" class="${st.tab === "moves" ? "on" : ""}">ประวัติความเคลื่อนไหว</button></div><div data-body></div>`;
   $$("[data-tab]", c).forEach(b => { b.onclick = () => { st.tab = b.dataset.tab; self.render(c); }; });
-  $("[data-newitem]", c).onclick = () => stockItemModal(null, () => self.render(c));
+  if ($("[data-newitem]", c)) $("[data-newitem]", c).onclick = () => stockItemModal(null, () => self.render(c));
   $$("[data-mv]", c).forEach(b => { b.onclick = () => stockMoveModal(b.dataset.mv, null, () => self.render(c)); });
   const items = await loadStockItems(true);
   const body = $("[data-body]", c);
@@ -711,7 +808,7 @@ BRANCH_PAGES.stock = { title: () => "สต็อกสินค้า", state: 
       $("[data-tbl]", c).innerHTML = rows.length ? `<table class="tbl"><thead><tr><th>สินค้า</th><th>หมวด</th><th class="num">คงเหลือ</th><th class="num">จุดสั่งซื้อ</th><th class="num">ต้นทุนเฉลี่ย/หน่วย</th><th class="num">มูลค่า</th><th>สถานะ</th></tr></thead><tbody>
         ${rows.map(i => `<tr class="click" data-id="${i.id}" style="${i.active ? "" : "opacity:.55"}"><td><div class="bold">${esc(i.name)}</div>${i.sku ? `<div class="muted small">${esc(i.sku)}</div>` : ""}</td><td class="small">${esc(i.category || "-")}</td>
           <td class="num bold">${fmtQ(i.qty)} <span class="muted small">${esc(i.unit)}</span></td><td class="num muted">${i.minQty ? fmtQ(i.minQty) : "-"}</td><td class="num">${fmt(i.avgCost)}</td><td class="num">${fmt(i.value)}</td>
-          <td>${!i.active ? `<span class="chip">ปิดใช้งาน</span>` : i.qty <= 0 ? `<span class="chip bad">หมด</span>` : i.low ? `<span class="chip warn">ใกล้หมด</span>` : `<span class="chip good">ปกติ</span>`}</td></tr>`).join("")}</tbody>
+          <td>${!i.active ? `<span class="chip">ปิดใช้งาน</span>` : i.qty <= 0 ? `<span class="chip bad">หมด</span>` : i.low ? `<span class="chip warn">ใกล้หมด</span>` : `<span class="chip good">ปกติ</span>`}${i.pending ? ` <span class="chip warn plain">รออนุมัติ ${i.pending}</span>` : ""}</td></tr>`).join("")}</tbody>
         <tfoot><tr><td colspan="5">รวม ${rows.length} รายการ</td><td class="num">${fmt(rows.reduce((a, i) => a + i.value, 0))}</td><td></td></tr></tfoot></table>` : emptyBox(items.length ? "ไม่พบสินค้า" : "ยังไม่มีสินค้า — กด “เพิ่มสินค้า” เพื่อเริ่มต้น", "stock");
       $$("tr[data-id]", c).forEach(tr => { tr.onclick = () => stockItemDetail(tr.dataset.id, () => self.render(c)); });
     };
@@ -721,26 +818,46 @@ BRANCH_PAGES.stock = { title: () => "สต็อกสินค้า", state: 
     $("[data-csv]", c).onclick = () => downloadCSV("stock-" + today() + ".csv", [["รหัส", "สินค้า", "หมวด", "คงเหลือ", "หน่วย", "จุดสั่งซื้อ", "ต้นทุนเฉลี่ย", "มูลค่า", "สถานะ"], ...items.map(i => [i.sku, i.name, i.category, i.qty, i.unit, i.minQty, i.avgCost, i.value, i.active ? (i.low ? "ใกล้หมด" : "ปกติ") : "ปิดใช้งาน"])]);
     draw();
   } else {
-    body.innerHTML = `<div class="card"><div class="toolbar">${rangeBar()}<select class="input" style="width:170px" data-kind><option value="">ทุกประเภท</option>${Object.keys(MOVE).map(k => opt(k, MOVE[k].th, k === st.kind)).join("")}</select><div class="grow"></div><button class="btn sm" data-csv>${icon("download")} CSV</button></div><div class="tbl-wrap" data-tbl><div class="boot" style="height:160px"><div class="spinner"></div></div></div></div>`;
+    body.innerHTML = `<div class="card"><div class="toolbar">${rangeBar()}<select class="input" style="width:170px" data-kind><option value="">ทุกประเภท</option>${Object.keys(MOVE).map(k => opt(k, MOVE[k].th, k === st.kind)).join("")}</select>
+      <select class="input" style="width:150px" data-mstatus>${opt("", "ทุกสถานะ")}${Object.keys(MSTATUS).map(k => opt(k, MSTATUS[k][0], k === st.mstatus)).join("")}</select><div class="grow"></div><button class="btn sm" data-csv>${icon("download")} CSV</button></div><div class="tbl-wrap" data-tbl><div class="boot" style="height:160px"><div class="spinner"></div></div></div></div>`;
     bindRange(body, () => self.render(c));
     $("[data-kind]", c).onchange = e => { st.kind = e.target.value; self.render(c); };
-    const mv = (await bapi("GET", "/stock/moves?" + rq() + (st.kind ? "&kind=" + st.kind : ""))).moves;
+    $("[data-mstatus]", c).onchange = e => { st.mstatus = e.target.value; self.render(c); };
+    const mv = (await bapi("GET", "/stock/moves?" + rq() + (st.kind ? "&kind=" + st.kind : "") + (st.mstatus ? "&status=" + st.mstatus : ""))).moves;
     $("[data-tbl]", c).innerHTML = movesTable(mv, true);
     bindMoveDeletes(c, () => self.render(c));
-    $("[data-csv]", c).onclick = () => downloadCSV("stock-moves-" + S.range.from + "_" + S.range.to + ".csv", [["วันที่", "สินค้า", "ประเภท", "จำนวน", "หน่วย", "ต้นทุน/หน่วย", "มูลค่า", "คงเหลือ", "อ้างอิง", "หมายเหตุ", "ผู้บันทึก"],
-      ...mv.map(m => [m.date, m.itemName, MOVE[m.kind].th, m.qty, m.unit, m.unitCost, m.amount, m.balance, m.docNo, m.note, m.createdBy])]);
+    $("[data-csv]", c).onclick = () => downloadCSV("stock-moves-" + S.range.from + "_" + S.range.to + ".csv", [["วันที่", "สินค้า", "ประเภท", "จำนวน", "หน่วย", "ต้นทุน/หน่วย", "มูลค่า", "คงเหลือ", "อ้างอิง", "หมายเหตุ", "ผู้บันทึก", "สถานะ", "ผู้อนุมัติ", "เหตุผลไม่อนุมัติ"],
+      ...mv.map(m => [m.date, m.itemName, MOVE[m.kind].th, m.kind === "count" && m.status !== "approved" ? "นับได้ " + m.counted : m.qty, m.unit, m.unitCost, m.amount, m.balance, m.docNo, m.note, m.createdBy, MSTATUS[m.status][0], m.approvedBy, m.rejectReason])]);
   }
 } };
 function movesTable(mv, showItem) {
   if (!mv.length) return emptyBox("ไม่มีความเคลื่อนไหวในช่วงนี้", "stock");
-  return `<table class="tbl"><thead><tr><th>วันที่</th>${showItem ? "<th>สินค้า</th>" : ""}<th>ประเภท</th><th class="num">จำนวน</th><th class="num">ต้นทุน/หน่วย</th><th class="num">มูลค่า</th><th class="num">คงเหลือ</th><th>อ้างอิง / หมายเหตุ</th><th></th></tr></thead><tbody>
-    ${mv.map(m => `<tr><td>${thDate(m.date, true)}</td>${showItem ? `<td class="bold">${esc(m.itemName)}</td>` : ""}<td><span class="chip ${MOVE[m.kind].chip}">${MOVE[m.kind].th}</span></td>
-      <td class="num bold ${m.qty < 0 ? "neg" : m.qty > 0 ? "pos" : ""}">${m.qty > 0 ? "+" : ""}${fmtQ(m.qty)} <span class="muted small">${esc(m.unit)}</span>${m.kind === "count" ? `<div class="muted small">นับได้ ${fmtQ(m.counted)}</div>` : ""}</td>
-      <td class="num">${fmt(m.unitCost)}</td><td class="num">${fmt(m.amount)}</td><td class="num">${fmtQ(m.balance)}</td>
+  const canDel = m => !m.refRecordId && canEdit("stock") && (m.status !== "approved" || approver("stock"));
+  return `<table class="tbl"><thead><tr><th>วันที่</th>${showItem ? "<th>สินค้า</th>" : ""}<th>ประเภท</th><th class="num">จำนวน</th><th class="num">ต้นทุน/หน่วย</th><th class="num">มูลค่า</th><th class="num">คงเหลือ</th><th>สถานะ</th><th>อ้างอิง / หมายเหตุ</th><th></th></tr></thead><tbody>
+    ${mv.map(m => { const ap = m.status === "approved"; return `<tr style="${m.status === "rejected" ? "opacity:.6" : ""}"><td>${thDate(m.date, true)}</td>${showItem ? `<td class="bold">${esc(m.itemName)}</td>` : ""}<td><span class="chip ${MOVE[m.kind].chip}">${MOVE[m.kind].th}</span></td>
+      <td class="num bold ${m.qty < 0 ? "neg" : m.qty > 0 ? "pos" : ""}">${ap || m.kind !== "count" ? (m.qty > 0 ? "+" : "") + fmtQ(m.qty) : "±"} <span class="muted small">${esc(m.unit)}</span>${m.kind === "count" ? `<div class="muted small">นับได้ ${fmtQ(m.counted)}</div>` : ""}</td>
+      <td class="num">${ap || m.kind === "in" ? fmt(m.unitCost) : "-"}</td><td class="num">${ap ? fmt(m.amount) : "-"}</td><td class="num">${ap ? fmtQ(m.balance) : "-"}</td>
+      <td><span class="chip ${MSTATUS[m.status][1]}">${MSTATUS[m.status][0]}</span>${m.status !== "pending" && m.approvedBy && !m.refRecordId ? `<div class="muted small">${esc(m.approvedBy)}</div>` : ""}${m.rejectReason ? `<div class="small neg">${esc(m.rejectReason)}</div>` : ""}</td>
       <td class="small">${m.docNo ? `<span class="doc">${esc(m.docNo)}</span> ` : ""}${esc(m.note)}<div class="muted">${esc(m.createdBy)}</div></td>
-      <td>${m.refRecordId ? "" : `<button class="btn ghost sm icon" data-delmove="${m.id}" title="ลบรายการ">${icon("trash")}</button>`}</td></tr>`).join("")}</tbody></table>`;
+      <td style="white-space:nowrap">${m.status === "pending" && approver("stock") ? `<button class="btn sm primary" data-apmove="${m.id}">อนุมัติ</button> <button class="btn sm" data-rjmove="${m.id}">ไม่อนุมัติ</button>` : ""}${canDel(m) ? `<button class="btn ghost sm icon" data-delmove="${m.id}" title="ลบรายการ">${icon("trash")}</button>` : ""}</td></tr>`; }).join("")}</tbody></table>`;
+}
+// อนุมัติ / ไม่อนุมัติ รายการสต็อก
+async function stockDecide(ids, ok, after) {
+  if (ok) { try { await bapi("POST", "/stock/moves/approve", { ids, approve: true }); S.stockItems = null; toast("อนุมัติ " + ids.length + " รายการแล้ว"); after(); } catch (e) { toast(e.message, "bad"); } return; }
+  const reason = await askReason("ไม่อนุมัติรายการสต็อก " + ids.length + " รายการ"); if (!reason) return;
+  try { await bapi("POST", "/stock/moves/approve", { ids, approve: false, reason }); toast("บันทึกไม่อนุมัติแล้ว"); after(); } catch (e) { toast(e.message, "bad"); }
+}
+function askReason(title) {
+  return new Promise(res => {
+    const m = openModal({ title, body: `<label class="field"><span>เหตุผล <em>*</em></span><textarea class="input" name="reason" rows="3" placeholder="เช่น จำนวนไม่ตรง ให้ตรวจนับใหม่"></textarea></label>`,
+      foot: `<button class="btn" data-close>ยกเลิก</button><button class="btn danger solid" data-ok>ไม่อนุมัติ</button>` });
+    let done = false; const oc = m.close; m.close = () => { if (!done) { done = true; res(null); } oc(); }; $$("[data-close],[data-x]", m.el).forEach(b => { b.onclick = () => m.close(); });
+    $("[data-ok]", m.el).onclick = () => { const v = $("[name=reason]", m.el).value.trim(); if (!v) return toast("กรุณาใส่เหตุผล", "bad"); done = true; res(v); oc(); };
+  });
 }
 function bindMoveDeletes(root, after) {
+  $$("[data-apmove]", root).forEach(b => { b.onclick = () => stockDecide([b.dataset.apmove], true, after); });
+  $$("[data-rjmove]", root).forEach(b => { b.onclick = () => stockDecide([b.dataset.rjmove], false, after); });
   $$("[data-delmove]", root).forEach(b => { b.onclick = async () => { if (!await confirmBox("ลบรายการเคลื่อนไหวนี้? ระบบจะคำนวณยอดคงเหลือและต้นทุนใหม่ให้", { danger: true, okText: "ลบ" })) return;
     try { await bapi("DELETE", "/stock/moves/" + b.dataset.delmove); S.stockItems = null; toast("ลบแล้ว"); after(); } catch (e) { toast(e.message, "bad"); } }; });
 }
@@ -759,8 +876,8 @@ function stockItemModal(item, after) {
     foot: `<button class="btn" data-close>ยกเลิก</button><button class="btn primary" data-save>${icon("check")} บันทึก</button>` });
   const sv = $("[data-save]", m.el);
   sv.onclick = () => withBtn(sv, async () => { const f = formData(m.el); f.minQty = num(f.minQty); f.openingQty = num(f.openingQty); f.openingCost = num(f.openingCost);
-    if (isNew) await bapi("POST", "/stock/items", f); else await bapi("PUT", "/stock/items/" + item.id, f);
-    S.stockItems = null; toast("บันทึกสินค้าแล้ว"); m.close(); after(); }).catch(() => {});
+    const r = isNew ? await bapi("POST", "/stock/items", f) : await bapi("PUT", "/stock/items/" + item.id, f);
+    S.stockItems = null; toast(r.pending ? "บันทึกสินค้าแล้ว · ยอดยกมารออนุมัติ" : "บันทึกสินค้าแล้ว"); m.close(); after(); }).catch(() => {});
 }
 async function stockItemDetail(id, after) {
   const it = (S.stockItems || await loadStockItems()).find(x => x.id === id); if (!it) return;
@@ -768,9 +885,10 @@ async function stockItemDetail(id, after) {
   const m = openModal({ title: esc(it.name), size: "xl", body: `<div class="pay-grid" style="margin-bottom:16px"><div class="mini-kpi"><div class="l">คงเหลือ</div><div class="v">${fmtQ(it.qty)} ${esc(it.unit)}</div></div><div class="mini-kpi"><div class="l">ต้นทุนเฉลี่ย/หน่วย</div><div class="v">${baht(it.avgCost)}</div></div>
       <div class="mini-kpi"><div class="l">มูลค่าคงเหลือ</div><div class="v">${baht(it.value)}</div></div><div class="mini-kpi"><div class="l">จุดสั่งซื้อ</div><div class="v">${it.minQty ? fmtQ(it.minQty) + " " + esc(it.unit) : "-"}</div></div></div>
     <div class="section-t">บัตรสต็อก (Stock Card)</div><div class="card tbl-wrap" data-mv>${movesTable(mv, false)}</div>`,
-    foot: `<div class="left"><button class="btn danger" data-del>${icon("trash")} ลบสินค้า</button><button class="btn" data-act>${it.active ? "ปิดใช้งาน" : "เปิดใช้งาน"}</button></div><button class="btn" data-in>${icon("income")} รับเข้า</button><button class="btn" data-out>${icon("expense")} เบิกใช้</button><button class="btn primary" data-edit>${icon("edit")} แก้ไข</button>` });
+    foot: canEdit("stock") ? `<div class="left"><button class="btn danger" data-del>${icon("trash")} ลบสินค้า</button><button class="btn" data-act>${it.active ? "ปิดใช้งาน" : "เปิดใช้งาน"}</button></div><button class="btn" data-in>${icon("income")} รับเข้า</button><button class="btn" data-out>${icon("expense")} เบิกใช้</button><button class="btn primary" data-edit>${icon("edit")} แก้ไข</button>` : `<button class="btn" data-close>ปิด</button>` });
   const done = () => { m.close(); after(); };
   bindMoveDeletes(m.el, done);
+  if (!canEdit("stock")) return;
   $("[data-edit]", m.el).onclick = () => { m.close(); stockItemModal(it, after); };
   $("[data-in]", m.el).onclick = () => { m.close(); stockMoveModal("in", id, after); };
   $("[data-out]", m.el).onclick = () => { m.close(); stockMoveModal("out", id, after); };
@@ -805,21 +923,21 @@ async function stockMoveModal(kind, itemId, after) {
   sv.onclick = () => withBtn(sv, async () => {
     const ls = lines.filter(l => l.itemId).map(l => ({ itemId: l.itemId, qty: num(l.qty, NaN), unitCost: l.unitCost === "" ? (items.find(x => x.id === l.itemId) || {}).avgCost : num(l.unitCost) }));
     if (!ls.length) throw new Error("กรุณาเลือกสินค้า");
-    await bapi("POST", "/stock/moves", { kind, date: $("[name=date]", el).value, note: $("[name=note]", el).value, lines: ls });
-    S.stockItems = null; toast("บันทึก" + MOVE[kind].th + "แล้ว"); m.close(); after();
+    const r = await bapi("POST", "/stock/moves", { kind, date: $("[name=date]", el).value, note: $("[name=note]", el).value, lines: ls });
+    S.stockItems = null; toast(r.pending ? "บันทึก" + MOVE[kind].th + "แล้ว · รอผู้อนุมัติ (ยอดยังไม่เปลี่ยน)" : "บันทึก" + MOVE[kind].th + "แล้ว"); m.close(); after();
   }).catch(() => {});
 }
 
 /* ---------- employees ---------- */
 BRANCH_PAGES.employees = { title: () => "พนักงาน", async render(c) {
   const self = this;
-  c.innerHTML = `<div class="page-head"><div class="grow"><h2>พนักงาน</h2><div class="muted small">ข้อมูลพนักงานและอัตราค่าจ้างของสาขา ใช้คำนวณเงินเดือนอัตโนมัติ</div></div><button class="btn primary" data-new>${icon("plus")} เพิ่มพนักงาน</button></div><div class="card"><div class="tbl-wrap" data-tbl><div class="boot" style="height:160px"><div class="spinner"></div></div></div></div>`;
-  $("[data-new]", c).onclick = () => empModal(null, () => self.render(c));
+  c.innerHTML = `<div class="page-head"><div class="grow"><h2>พนักงาน</h2><div class="muted small">ข้อมูลพนักงานและอัตราค่าจ้างของสาขา ใช้คำนวณเงินเดือนอัตโนมัติ · ตั้ง PIN ให้พนักงานเพื่อใช้เช็คอินเข้างาน</div></div>${canEdit("employees") ? `<button class="btn primary" data-new>${icon("plus")} เพิ่มพนักงาน</button>` : ""}</div><div class="card"><div class="tbl-wrap" data-tbl><div class="boot" style="height:160px"><div class="spinner"></div></div></div></div>`;
+  if ($("[data-new]", c)) $("[data-new]", c).onclick = () => empModal(null, () => self.render(c));
   const emps = S.emps = (await bapi("GET", "/employees")).employees;
-  $("[data-tbl]", c).innerHTML = emps.length ? `<table class="tbl"><thead><tr><th>รหัส</th><th>ชื่อ-สกุล</th><th>ตำแหน่ง</th><th>รูปแบบค่าจ้าง</th><th class="num">อัตรา</th><th>ประกันสังคม</th><th>บัญชีรับเงิน</th><th>สถานะ</th></tr></thead><tbody>
+  $("[data-tbl]", c).innerHTML = emps.length ? `<table class="tbl"><thead><tr><th>รหัส</th><th>ชื่อ-สกุล</th><th>ตำแหน่ง</th><th>รูปแบบค่าจ้าง</th><th class="num">อัตรา</th><th>ประกันสังคม</th><th>บัญชีรับเงิน</th><th>PIN เช็คอิน</th><th>สถานะ</th></tr></thead><tbody>
     ${emps.map(e => `<tr class="click" data-id="${e.id}" style="${e.active ? "" : "opacity:.55"}"><td class="muted">${esc(e.code)}</td><td><div class="bold">${esc(e.name)}${e.nickname ? ` <span class="muted">(${esc(e.nickname)})</span>` : ""}</div><div class="muted small">${e.startDate ? "เริ่มงาน " + thDate(e.startDate, true) : ""}</div></td>
       <td>${esc(e.position || "-")}</td><td>${e.payType === "daily" ? "รายวัน" : "รายเดือน"}</td><td class="num bold">${baht(e.rate)}<span class="muted small">/${e.payType === "daily" ? "วัน" : "เดือน"}</span></td>
-      <td>${e.sso ? `<span class="chip blue">หักประกันสังคม</span>` : `<span class="chip">ไม่หัก</span>`}</td><td class="small">${esc(e.bankName)} ${esc(e.bankAccount)}</td><td>${e.active ? `<span class="chip good">ทำงานอยู่</span>` : `<span class="chip">ลาออก / ปิด</span>`}</td></tr>`).join("")}</tbody></table>`
+      <td>${e.sso ? `<span class="chip blue">หักประกันสังคม</span>` : `<span class="chip">ไม่หัก</span>`}</td><td class="small">${esc(e.bankName)} ${esc(e.bankAccount)}</td><td>${e.hasPin ? `<span class="chip good plain">ตั้งแล้ว</span>` : `<span class="chip plain">ยังไม่ตั้ง</span>`}</td><td>${e.active ? `<span class="chip good">ทำงานอยู่</span>` : `<span class="chip">ลาออก / ปิด</span>`}</td></tr>`).join("")}</tbody></table>`
     : emptyBox("ยังไม่มีพนักงาน — กด “เพิ่มพนักงาน”", "users");
   $$("tr[data-id]", c).forEach(tr => { tr.onclick = () => empModal(emps.find(e => e.id === tr.dataset.id), () => self.render(c)); });
 } };
@@ -840,11 +958,16 @@ function empModal(e, after) {
     <label class="field"><span>เลขบัตรประชาชน</span><input class="input" name="idCard" value="${esc(e.idCard)}" inputmode="numeric" maxlength="17"></label>
     <label class="field"><span>ธนาคาร</span><input class="input" name="bankName" value="${esc(e.bankName)}" list="bank-dl"><datalist id="bank-dl">${["กสิกรไทย", "ไทยพาณิชย์", "กรุงเทพ", "กรุงไทย", "กรุงศรีอยุธยา", "ทหารไทยธนชาต (ttb)", "ออมสิน", "ธ.ก.ส.", "พร้อมเพย์"].map(n => opt(n)).join("")}</datalist></label>
     <label class="field"><span>เลขที่บัญชี</span><input class="input" name="bankAccount" value="${esc(e.bankAccount)}"></label></div>
+    <div class="section-t" style="margin-top:18px">PIN สำหรับเช็คอินเข้า-ออกงาน</div><div class="grid g3">
+    <label class="field"><span>${e.hasPin ? "ตั้ง PIN ใหม่ (เว้นว่าง = ใช้ PIN เดิม)" : "PIN 4-6 หลัก"}</span><input class="input" name="pin" inputmode="numeric" maxlength="6" autocomplete="off" placeholder="${e.hasPin ? "••••" : "เช่น 1234"}"></label>
+    <div class="field" style="align-self:end">${e.hasPin ? `<label class="check" style="height:38px"><input type="checkbox" name="clearPin"> ลบ PIN (ปิดการเช็คอินของคนนี้)</label>` : `<div class="field-hint">พนักงานใช้ PIN นี้ยืนยันตัวตนตอนเช็คอินบนมือถือ</div>`}</div></div>
     <label class="field" style="margin-top:14px"><span>หมายเหตุ</span><input class="input" name="note" value="${esc(e.note)}"></label>`,
-    foot: `${isNew ? "" : `<div class="left"><button class="btn danger" data-del>${icon("trash")} ลบ</button><button class="btn" data-act>${e.active ? "ปิดใช้งาน (ลาออก)" : "เปิดใช้งานอีกครั้ง"}</button></div>`}<button class="btn" data-close>ยกเลิก</button><button class="btn primary" data-save>${icon("check")} บันทึก</button>` });
+    foot: !canEdit("employees") ? `<button class="btn" data-close>ปิด</button>` : `${isNew ? "" : `<div class="left"><button class="btn danger" data-del>${icon("trash")} ลบ</button><button class="btn" data-act>${e.active ? "ปิดใช้งาน (ลาออก)" : "เปิดใช้งานอีกครั้ง"}</button></div>`}<button class="btn" data-close>ยกเลิก</button><button class="btn primary" data-save>${icon("check")} บันทึก</button>` });
   $("[name=payType]", m.el).onchange = ev => { $("[data-ratelbl]", m.el).innerHTML = `อัตรา (บาท/${ev.target.value === "daily" ? "วัน" : "เดือน"}) <em>*</em>`; };
   const sv = $("[data-save]", m.el);
+  if (!sv) return;
   sv.onclick = () => withBtn(sv, async () => { const f = formData(m.el); f.rate = num(f.rate, NaN); if (!isFinite(f.rate)) throw new Error("กรุณาใส่อัตราค่าจ้าง");
+    f.pin = String(f.pin || "").trim(); if (f.pin && !/^\d{4,6}$/.test(f.pin)) throw new Error("PIN ต้องเป็นตัวเลข 4-6 หลัก");
     if (isNew) await bapi("POST", "/employees", f); else await bapi("PUT", "/employees/" + e.id, f); toast("บันทึกข้อมูลพนักงานแล้ว"); m.close(); after(); }).catch(() => {});
   const act = $("[data-act]", m.el); if (act) act.onclick = async () => { await bapi("PUT", "/employees/" + e.id, { active: !e.active }); toast("อัปเดตสถานะแล้ว"); m.close(); after(); };
   const del = $("[data-del]", m.el); if (del) del.onclick = async () => { if (!await confirmBox("ลบพนักงาน " + e.name + "?", { danger: true, okText: "ลบ" })) return; try { await bapi("DELETE", "/employees/" + e.id); toast("ลบแล้ว"); m.close(); after(); } catch (err) { toast(err.message, "bad"); } };
@@ -866,8 +989,8 @@ function calcPay(it) { // ต้องตรงกับ calcPayItem ฝั่�
 BRANCH_PAGES.payroll = { title: rest => rest && rest[0] ? "งวดเงินเดือน" : "เงินเดือน & สลิป", nav: "payroll", async render(c, rest) {
   if (rest && rest[0]) return payrollRun(c, rest[0]);
   const self = this;
-  c.innerHTML = `<div class="page-head"><div class="grow"><h2>เงินเดือน & สลิปเงินเดือน</h2><div class="muted small">สร้างงวด → ปรับ OT/เบี้ยเลี้ยง/รายการหัก → กด “จ่ายเงินเดือน” ระบบลงรายจ่ายให้อัตโนมัติ และพิมพ์สลิปได้ทันที</div></div><button class="btn primary" data-new>${icon("plus")} สร้างงวดเงินเดือน</button></div><div class="card"><div class="tbl-wrap" data-tbl><div class="boot" style="height:160px"><div class="spinner"></div></div></div></div>`;
-  $("[data-new]", c).onclick = () => {
+  c.innerHTML = `<div class="page-head"><div class="grow"><h2>เงินเดือน & สลิปเงินเดือน</h2><div class="muted small">สร้างงวด → กด “ดึงข้อมูลอัตโนมัติ” (วันทำงาน/ขาด-ลา/เบิกล่วงหน้า) → ปรับ OT/เบี้ยเลี้ยง → กด “จ่ายเงินเดือน” ระบบลงรายจ่ายให้อัตโนมัติ</div></div>${canEdit("payroll") ? `<button class="btn primary" data-new>${icon("plus")} สร้างงวดเงินเดือน</button>` : ""}</div><div class="card"><div class="tbl-wrap" data-tbl><div class="boot" style="height:160px"><div class="spinner"></div></div></div></div>`;
+  if ($("[data-new]", c)) $("[data-new]", c).onclick = () => {
     const p = today().slice(0, 7);
     const m = openModal({ title: "สร้างงวดเงินเดือน", body: `<div class="grid g2"><label class="field"><span>งวดเดือน</span><input type="month" class="input" name="period" value="${p}"></label><label class="field"><span>วันที่จ่าย</span><input type="date" class="input" name="payDate" value="${monthEnd(p)}"></label></div>
       <label class="field" style="margin-top:14px"><span>ชื่องวด (ไม่บังคับ)</span><input class="input" name="title" placeholder="เช่น เงินเดือน, ค่าแรงครึ่งเดือนแรก"></label><div class="field-hint" style="margin-top:10px">ระบบจะดึงพนักงานที่ทำงานอยู่ทั้งหมดพร้อมอัตราค่าจ้าง และคำนวณประกันสังคมให้อัตโนมัติ</div>`,
@@ -884,18 +1007,18 @@ BRANCH_PAGES.payroll = { title: rest => rest && rest[0] ? "งวดเงิน
 } };
 async function payrollRun(c, runId) {
   const run = (await bapi("GET", "/payroll/runs/" + runId)).run;
-  const draft = run.status === "draft";
+  const draft = run.status === "draft" && canEdit("payroll");
   const items = run.items.map(it => { const x = { ...it, ssoOverride: "" }; if (Math.abs(calcPay({ ...x, otRate: "" }).otRate - x.otRate) < .01) x.otRate = ""; return x; });
   items.forEach(it => { const auto = calcPay({ ...it, ssoOverride: "" }).ssoAuto; if (Math.abs(auto - it.sso) > .001) it.ssoOverride = it.sso; });
   let dirty = false;
   const cell = (it, i, f, w) => draft ? `<input class="input sm num" style="width:${w || 82}px" data-i="${i}" data-f="${f}" value="${it[f] === 0 ? "" : esc(it[f])}" placeholder="0" inputmode="decimal">` : `<span>${fmt(it[f])}</span>`;
   c.innerHTML = `<div class="page-head"><a class="btn ghost icon" href="#/b/${S.bid}/payroll" title="กลับ">${icon("back")}</a><div class="grow"><h2>${esc(run.title || "เงินเดือน")} · ${thMonth(run.period)}</h2>
       <div class="row small muted" style="margin-top:2px">${draft ? `<span class="chip warn">ฉบับร่าง</span>` : `<span class="chip good">จ่ายแล้ว ${thDate(run.payDate)} · ${esc(run.paymentChannel)} · เอกสาร ${esc(run.recordDocNo)}</span>`}<span>สร้างโดย ${esc(run.createdBy)}</span></div></div>
-      <button class="btn" data-slips>${icon("print")} พิมพ์สลิปทั้งหมด</button>${draft ? `<button class="btn danger" data-del>${icon("trash")}</button><button class="btn" data-save>${icon("check")} บันทึก</button><button class="btn primary" data-pay>${icon("payroll")} จ่ายเงินเดือน</button>` : `<button class="btn danger" data-unpay>ยกเลิกการจ่าย</button>`}</div>
+      <button class="btn" data-slips>${icon("print")} พิมพ์สลิปทั้งหมด</button>${draft ? `<button class="btn danger" data-del>${icon("trash")}</button><button class="btn" data-auto>${icon("clock")} ดึงข้อมูลอัตโนมัติ</button><button class="btn" data-save>${icon("check")} บันทึก</button><button class="btn primary" data-pay>${icon("payroll")} จ่ายเงินเดือน</button>` : run.status === "paid" && canEdit("payroll") ? `<button class="btn danger" data-unpay>ยกเลิกการจ่าย</button>` : ""}</div>
     ${draft ? `<div class="card card-b" style="margin-bottom:14px"><div class="grid g3"><label class="field"><span>ชื่องวด</span><input class="input" data-meta="title" value="${esc(run.title)}"></label><label class="field"><span>วันที่จ่าย</span><input type="date" class="input" data-meta="payDate" value="${esc(run.payDate)}"></label><label class="field"><span>หมายเหตุ</span><input class="input" data-meta="note" value="${esc(run.note)}"></label></div></div>` : ""}
     <div class="pay-grid" data-kpi style="margin-bottom:14px"></div>
     <div class="card"><div class="toolbar"><b class="grow">รายละเอียดรายคน</b>${draft ? `<button class="btn sm" data-addemp>${icon("plus")} เพิ่มพนักงานในงวด</button>` : ""}</div><div class="tbl-wrap"><table class="tbl" data-tbl><thead><tr><th>พนักงาน</th><th class="num">วันทำงาน</th><th class="num">ฐาน</th><th class="num">OT (ชม.)</th><th class="num">ค่า OT</th><th class="num">เบี้ยเลี้ยง</th><th class="num">โบนัส</th><th class="num">ขาด/ลา/สาย</th><th class="num">ประกันสังคม</th><th class="num">ภาษี</th><th class="num">เบิกล่วงหน้า</th><th class="num">สุทธิ</th></tr></thead><tbody>
-    ${items.map((it, i) => `<tr data-row="${i}"><td style="min-width:190px"><div class="row" style="gap:6px"><div class="grow"><div class="bold" style="white-space:nowrap">${esc(it.emp.name)}</div><div class="muted small" style="white-space:nowrap">${esc(it.emp.position || "")}${it.emp.position ? " · " : ""}${it.payType === "daily" ? "รายวัน " + fmt(it.rate) : "รายเดือน"}</div></div><button class="btn ghost sm icon" data-more="${i}" title="${draft ? "แก้ไขรายละเอียด" : "ดูรายละเอียด"}">${icon(draft ? "edit" : "more")}</button><button class="btn ghost sm icon" data-slip="${i}" title="พิมพ์สลิป">${icon("print")}</button></div></td>
+    ${items.map((it, i) => `<tr data-row="${i}"><td style="min-width:190px"><div class="row" style="gap:6px"><div class="grow"><div class="bold" style="white-space:nowrap">${esc(it.emp.name)}</div><div class="muted small" style="white-space:nowrap">${esc(it.emp.position || "")}${it.emp.position ? " · " : ""}${it.payType === "daily" ? "รายวัน " + fmt(it.rate) : "รายเดือน"}</div>${linkNote(it)}</div><button class="btn ghost sm icon" data-more="${i}" title="${draft ? "แก้ไขรายละเอียด" : "ดูรายละเอียด"}">${icon(draft ? "edit" : "more")}</button><button class="btn ghost sm icon" data-slip="${i}" title="พิมพ์สลิป">${icon("print")}</button></div></td>
       <td class="num">${it.payType === "daily" ? cell(it, i, "workDays", 64) : `<span class="muted">-</span>`}</td><td class="num" data-c="base"></td><td class="num">${cell(it, i, "otHours", 64)}</td><td class="num" data-c="ot"></td>
       <td class="num">${cell(it, i, "allowance")}</td><td class="num">${cell(it, i, "bonus")}</td><td class="num">${cell(it, i, "absentDeduct")}</td>
       <td class="num">${draft ? `<input class="input sm num" style="width:76px" data-i="${i}" data-f="ssoOverride" value="${esc(it.ssoOverride)}" placeholder="">` : fmt(it.sso)}</td>
@@ -918,6 +1041,11 @@ async function payrollRun(c, runId) {
   const sv = $("[data-save]", c); if (sv) sv.onclick = () => withBtn(sv, () => save()).catch(() => {});
   const del = $("[data-del]", c); if (del) del.onclick = async () => { if (!await confirmBox("ลบงวดเงินเดือนฉบับร่างนี้?", { danger: true, okText: "ลบงวด" })) return; await bapi("DELETE", "/payroll/runs/" + runId); toast("ลบงวดแล้ว"); go("#/b/" + S.bid + "/payroll"); };
   const un = $("[data-unpay]", c); if (un) un.onclick = async () => { if (!await confirmBox(`ยกเลิกการจ่ายงวดนี้?\nเอกสารรายจ่าย ${run.recordDocNo} ที่สร้างอัตโนมัติจะถูกลบ และงวดกลับเป็นฉบับร่างให้แก้ไขได้`, { danger: true, okText: "ยกเลิกการจ่าย" })) return; await bapi("POST", "/payroll/runs/" + runId + "/unpay"); toast("ยกเลิกการจ่ายแล้ว"); payrollRun(c, runId); };
+  const au = $("[data-auto]", c); if (au) au.onclick = async () => {
+    if (!await confirmBox("ดึงข้อมูลอัตโนมัติเข้างวดนี้?\n• พนักงานรายวัน: วันทำงาน = จำนวนวันที่เช็คอิน\n• ขาด/ลา/สาย: ยอดหักจากรายการลาที่อนุมัติแล้วในเดือนนี้\n• เบิกล่วงหน้า: ยอดเบิกที่อนุมัติแล้วและยังไม่ได้หักคืน\n\nช่องวันทำงาน (รายวัน), ขาด/ลา/สาย และเบิกล่วงหน้า จะถูกเขียนทับ", { okText: "ดึงข้อมูล" })) return;
+    try { if (dirty) await save(true); const r = await withBtn(au, () => bapi("POST", "/payroll/runs/" + runId + "/autofill"));
+      toast(`ดึงข้อมูลแล้ว · วันทำงานจากเช็คอิน ${r.summary.attendance} คน · ลา ${r.summary.leaves} รายการ · เบิก ${r.summary.advances} รายการ`); payrollRun(c, runId); } catch (e) {}
+  };
   const pay = $("[data-pay]", c); if (pay) pay.onclick = async () => {
     try { await save(true); } catch (e) { return toast(e.message, "bad"); }
     const r = (await bapi("GET", "/payroll/runs/" + runId)).run; const chans = listNames("payment_channel").filter(n => !isCreditChannel(n));
@@ -949,6 +1077,13 @@ async function payrollRun(c, runId) {
   $("[data-slips]", c).onclick = () => { refresh(); printSlips(run, items); };
   window.onbeforeunload = () => dirty && draft ? "ยังไม่ได้บันทึก" : undefined;
 }
+function linkNote(it) {
+  const l = it.links || {}; const parts = [];
+  if (l.attendanceDays != null) parts.push("เช็คอิน " + l.attendanceDays + " วัน");
+  if (l.leaveIds && l.leaveIds.length) parts.push("ลา " + l.leaveIds.length + " รายการ");
+  if (l.advanceIds && l.advanceIds.length) parts.push("เบิก " + l.advanceIds.length + " รายการ");
+  return parts.length ? `<div class="small" style="color:var(--primary);white-space:nowrap">${icon("link", "").replace("<svg", '<svg style="width:12px;height:12px;vertical-align:-2px"')} ${parts.join(" · ")}</div>` : "";
+}
 function printSlips(run, items) {
   const c = S.binfo.company, b = S.binfo.branch;
   const slip = it => {
@@ -971,20 +1106,375 @@ function printSlips(run, items) {
     .sig2{display:flex;justify-content:space-around;margin-top:auto;padding-top:22px;text-align:center;font-size:12px}.sig2 div{width:38%;border-top:1px solid #4a5567;padding-top:4px}.small{font-size:11px}`);
 }
 
+/* ---------- shared: employees / status ---------- */
+async function loadEmps(force) { if (!S.emps || force) S.emps = (await bapi("GET", "/employees")).employees; return S.emps; }
+const RSTATUS = { pending: ["รออนุมัติ", "warn"], approved: ["อนุมัติแล้ว", "good"], rejected: ["ไม่อนุมัติ", "bad"], cancelled: ["ยกเลิกแล้ว", ""] };
+const statusCell = x => `<span class="chip ${RSTATUS[x.status][1]}">${RSTATUS[x.status][0]}</span>${x.status !== "pending" && x.approvedBy ? `<div class="muted small">${esc(x.approvedBy)}${x.approvedAt ? " · " + thDateTime(x.approvedAt) : ""}</div>` : ""}${x.rejectReason ? `<div class="small neg">${esc(x.rejectReason)}</div>` : ""}`;
+const empOpts = (emps, sel, first) => (first ? opt("", first) : "") + emps.filter(e => e.active || e.id === sel).map(e => opt(e.id, e.name + (e.nickname ? " (" + e.nickname + ")" : ""), e.id === sel)).join("");
+const statusSeg = (st, keys) => `<div class="seg" data-stf>${[["", "ทั้งหมด"], ...keys.map(k => [k, RSTATUS[k][0]])].map(([k, l]) => `<button data-sv="${k}" class="${st.status === k ? "on" : ""}">${l}</button>`).join("")}</div>`;
+const LEAVE_TH = { sick: "ลาป่วย", personal: "ลากิจ", vacation: "ลาพักร้อน", unpaid: "ลาไม่รับค่าจ้าง", absent: "ขาดงาน", late: "มาสาย" };
+const LEAVE_CHIP = { sick: "blue", personal: "blue", vacation: "good", unpaid: "warn", absent: "bad", late: "warn" };
+
+/* ---------- ขาด-ลา ---------- */
+BRANCH_PAGES.leave = { title: () => "ขาด-ลา", state: { status: "", emp: "" }, async render(c) {
+  const st = this.state, self = this, ed = canEdit("leave");
+  c.innerHTML = `<div class="page-head"><div class="grow"><h2>ขาด-ลา / มาสาย</h2><div class="muted small">บันทึกการลา → ผู้อนุมัติกดอนุมัติ → ยอดหักเข้าไปหักในงวดเงินเดือนอัตโนมัติ (กด “ดึงข้อมูลอัตโนมัติ” ในงวด)</div></div>${rangeBar()}${ed ? `<button class="btn primary" data-new>${icon("plus")} บันทึกขาด/ลา</button>` : ""}</div>
+    <div class="pay-grid" data-kpi style="margin-bottom:14px"></div>
+    <div class="card"><div class="toolbar">${statusSeg(st, ["pending", "approved", "rejected"])}<select class="input" style="width:220px" data-emp></select><div class="grow"></div><button class="btn sm" data-csv>${icon("download")} CSV</button></div><div class="tbl-wrap" data-tbl><div class="boot" style="height:160px"><div class="spinner"></div></div></div></div>`;
+  bindRange(c, () => self.render(c));
+  const emps = await loadEmps(true);
+  $("[data-emp]", c).innerHTML = empOpts(emps, st.emp, "พนักงานทุกคน");
+  $("[data-emp]", c).onchange = e => { st.emp = e.target.value; self.render(c); };
+  $$("[data-sv]", c).forEach(b => { b.onclick = () => { st.status = b.dataset.sv; self.render(c); }; });
+  if (ed) $("[data-new]", c).onclick = () => leaveModal(emps, () => self.render(c));
+  const r = await bapi("GET", "/leaves?" + rq() + (st.status ? "&status=" + st.status : "") + (st.emp ? "&employeeId=" + st.emp : ""));
+  const L = r.leaves, appr = L.filter(x => x.status === "approved");
+  $("[data-kpi]", c).innerHTML = `<div class="mini-kpi"><div class="l">รออนุมัติ</div><div class="v" style="color:${L.some(x => x.status === "pending") ? "var(--warn)" : ""}">${L.filter(x => x.status === "pending").length} รายการ</div></div>
+    <div class="mini-kpi"><div class="l">อนุมัติแล้ว</div><div class="v">${appr.length} รายการ</div></div><div class="mini-kpi"><div class="l">วันลารวม (อนุมัติ)</div><div class="v">${fmtQ(appr.reduce((a, x) => a + x.days, 0))} วัน</div></div>
+    <div class="mini-kpi"><div class="l">ยอดหักรวม (อนุมัติ)</div><div class="v">${baht(appr.reduce((a, x) => a + x.deduct, 0))}</div></div>`;
+  $("[data-tbl]", c).innerHTML = L.length ? `<table class="tbl"><thead><tr><th>วันที่</th><th>พนักงาน</th><th>ประเภท</th><th class="num">จำนวน</th><th class="num">ยอดหัก</th><th>เหตุผล</th><th>สถานะ</th><th>งวดเงินเดือน</th><th></th></tr></thead><tbody>
+    ${L.map(x => `<tr><td style="white-space:nowrap">${thDate(x.dateFrom, true)}${x.dateTo !== x.dateFrom ? " – " + thDate(x.dateTo, true) : ""}</td><td class="bold">${esc(x.empName)}</td><td><span class="chip ${LEAVE_CHIP[x.kind]} plain">${esc(x.kindTh)}</span></td>
+      <td class="num">${x.kind === "late" ? x.minutes + " นาที" : fmtQ(x.days) + " วัน"}</td><td class="num bold">${fmt(x.deduct)}</td><td class="small"><div class="desc">${esc(x.reason || "-")}</div><div class="muted">โดย ${esc(x.requestedBy)}</div></td><td>${statusCell(x)}</td>
+      <td class="small">${x.payrollRunId ? `<span class="chip good plain">หักแล้ว ${thMonth(x.payrollPeriod)}</span>` : x.status === "approved" ? `<span class="muted">รอหักในงวด</span>` : ""}</td>
+      <td style="white-space:nowrap">${x.status === "pending" && r.canApprove ? `<button class="btn sm primary" data-ap="${x.id}">อนุมัติ</button> <button class="btn sm" data-rj="${x.id}">ไม่อนุมัติ</button>` : ""}
+        ${ed && !x.payrollRunId && (x.status === "pending" || r.canApprove) ? `<button class="btn ghost sm icon" data-del="${x.id}" title="ลบ">${icon("trash")}</button>` : ""}</td></tr>`).join("")}</tbody></table>` : emptyBox("ไม่มีรายการขาด-ลาในช่วงนี้", "calendar");
+  const find = id => L.find(x => x.id === id);
+  $$("[data-ap]", c).forEach(b => { b.onclick = () => leaveApprove(find(b.dataset.ap), () => self.render(c)); });
+  $$("[data-rj]", c).forEach(b => { b.onclick = async () => { const reason = await askReason("ไม่อนุมัติ" + find(b.dataset.rj).kindTh); if (!reason) return; try { await bapi("POST", "/leaves/" + b.dataset.rj + "/approve", { approve: false, reason }); toast("บันทึกแล้ว"); self.render(c); } catch (e) { toast(e.message, "bad"); } }; });
+  $$("[data-del]", c).forEach(b => { b.onclick = async () => { const x = find(b.dataset.del); if (!await confirmBox(`ลบรายการ${x.kindTh} ของ ${x.empName}?`, { danger: true, okText: "ลบ" })) return; try { await bapi("DELETE", "/leaves/" + x.id); toast("ลบแล้ว"); self.render(c); } catch (e) { toast(e.message, "bad"); } }; });
+  $("[data-csv]", c).onclick = () => downloadCSV("leaves-" + S.range.from + "_" + S.range.to + ".csv", [["วันที่เริ่ม", "ถึง", "พนักงาน", "ประเภท", "วัน", "นาที", "ยอดหัก", "เหตุผล", "สถานะ", "ผู้ขอ", "ผู้อนุมัติ", "งวดที่หัก"],
+    ...L.map(x => [x.dateFrom, x.dateTo, x.empName, x.kindTh, x.days, x.minutes, x.deduct, x.reason, RSTATUS[x.status][0], x.requestedBy, x.approvedBy, x.payrollPeriod])]);
+} };
+function leaveModal(emps, after) {
+  const d = { employeeId: "", kind: "sick", dateFrom: today(), dateTo: today(), days: "", minutes: "", reason: "", deduct: "" };
+  const m = openModal({ title: "บันทึกขาด / ลา / มาสาย", size: "lg", body: `<div class="grid g2">
+      <label class="field"><span>พนักงาน <em>*</em></span><select class="input" name="employeeId">${empOpts(emps, "", "— เลือกพนักงาน —")}</select></label>
+      <label class="field"><span>ประเภท <em>*</em></span><select class="input" name="kind">${Object.keys(LEAVE_TH).map(k => opt(k, LEAVE_TH[k], k === d.kind)).join("")}</select></label>
+      <label class="field"><span>ตั้งแต่วันที่</span><input type="date" class="input" name="dateFrom" value="${d.dateFrom}"></label>
+      <label class="field" data-towrap><span>ถึงวันที่</span><input type="date" class="input" name="dateTo" value="${d.dateTo}"></label>
+      <label class="field" data-dayswrap><span>จำนวนวัน (ครึ่งวัน = 0.5)</span><input class="input num" name="days" inputmode="decimal" placeholder="1"></label>
+      <label class="field hidden" data-minwrap><span>มาสายกี่นาที <em>*</em></span><input class="input num" name="minutes" inputmode="numeric" placeholder="เช่น 30"></label>
+      <label class="field"><span>ยอดหักจากเงินเดือน (บาท)</span><input class="input num" name="deduct" inputmode="decimal" placeholder="อัตโนมัติ"><div class="field-hint" data-hint></div></label></div>
+    <label class="field" style="margin-top:14px"><span>เหตุผล / หมายเหตุ</span><input class="input" name="reason" placeholder="เช่น ไม่สบาย มีใบรับรองแพทย์"></label>
+    ${approver("leave") ? `<label class="check" style="margin-top:14px"><input type="checkbox" name="approveNow" checked> อนุมัติทันที (คุณเป็นผู้อนุมัติการลา)</label>` : `<div class="info-box" style="margin-top:14px">รายการนี้จะรอผู้อนุมัติก่อน จึงจะนำไปหักในงวดเงินเดือน</div>`}`,
+    foot: `<button class="btn" data-close>ยกเลิก</button><button class="btn primary" data-ok>${icon("check")} บันทึก</button>` });
+  const el = m.el;
+  const preview = debounce(async () => { const f = formData(el); const h = $("[data-hint]", el);
+    if (!f.employeeId) { h.textContent = "เลือกพนักงานเพื่อคำนวณยอดหักอัตโนมัติ"; return; }
+    try { const p = await bapi("GET", `/leaves/preview?employeeId=${f.employeeId}&kind=${f.kind}&dateFrom=${f.dateFrom}&dateTo=${f.dateTo || f.dateFrom}&days=${encodeURIComponent(f.days)}&minutes=${encodeURIComponent(f.minutes || 0)}`);
+      $("[name=deduct]", el).placeholder = "อัตโนมัติ " + fmt(p.deduct);
+      if (!f.days && f.kind !== "late") $("[name=days]", el).placeholder = p.days;
+      h.innerHTML = `อัตโนมัติ = <b>${fmt(p.deduct)}</b> บาท (ค่าจ้างต่อวัน ${fmt(p.dayRate)}${p.payType === "monthly" ? " = เงินเดือน÷30" : ""}${["sick", "personal", "vacation"].includes(f.kind) ? " · ลาประเภทนี้ได้รับค่าจ้าง ไม่หัก" : f.kind === "late" ? " · ÷8 ชม. ÷60 × นาที" : ""}) · แก้เองได้`;
+    } catch (e) { h.textContent = e.message; } }, 250);
+  const kindToggle = () => { const late = $("[name=kind]", el).value === "late"; $("[data-minwrap]", el).classList.toggle("hidden", !late); $("[data-dayswrap]", el).classList.toggle("hidden", late); $("[data-towrap]", el).classList.toggle("hidden", late); preview(); };
+  $$("[name]", el).forEach(i => { i.addEventListener(i.tagName === "SELECT" || i.type === "date" ? "change" : "input", () => { if (i.name === "dateFrom" && $("[name=dateTo]", el).value < i.value) $("[name=dateTo]", el).value = i.value; if (i.name === "kind") kindToggle(); else if (i.name !== "deduct" && i.name !== "reason") preview(); }); });
+  kindToggle();
+  const ok = $("[data-ok]", el); ok.onclick = () => withBtn(ok, async () => { const f = formData(el); if (!f.employeeId) throw new Error("กรุณาเลือกพนักงาน");
+    if (f.kind === "late") f.dateTo = f.dateFrom;
+    const r = await bapi("POST", "/leaves", { ...f, approveNow: f.approveNow !== false });
+    toast(r.status === "approved" ? "บันทึกและอนุมัติแล้ว" : "บันทึกแล้ว · รอผู้อนุมัติ"); m.close(); after(); }).catch(() => {});
+}
+function leaveApprove(x, after) {
+  const m = openModal({ title: "อนุมัติ" + esc(x.kindTh) + " · " + esc(x.empName), body: `<div class="pay-grid" style="grid-template-columns:repeat(2,1fr);margin-bottom:14px"><div class="mini-kpi"><div class="l">วันที่</div><div class="v" style="font-size:15px">${thDate(x.dateFrom)}${x.dateTo !== x.dateFrom ? " – " + thDate(x.dateTo) : ""}</div></div>
+      <div class="mini-kpi"><div class="l">จำนวน</div><div class="v" style="font-size:15px">${x.kind === "late" ? x.minutes + " นาที" : fmtQ(x.days) + " วัน"}</div></div></div>
+    ${x.reason ? `<p><b>เหตุผล:</b> ${esc(x.reason)}</p>` : ""}<p class="muted small">ขอโดย ${esc(x.requestedBy)} · ${thDateTime(x.createdAt)}</p>
+    <label class="field"><span>ยอดหักจากเงินเดือน (บาท)</span><input class="input num" name="deduct" value="${x.deduct}" inputmode="decimal"></label><div class="field-hint">ยอดนี้จะถูกหักในงวดเงินเดือนของเดือนที่ลา</div>`,
+    foot: `<button class="btn" data-close>ยกเลิก</button><button class="btn primary" data-ok>${icon("check")} อนุมัติ</button>` });
+  const ok = $("[data-ok]", m.el); ok.onclick = () => withBtn(ok, async () => { await bapi("POST", "/leaves/" + x.id + "/approve", { approve: true, deduct: $("[name=deduct]", m.el).value }); toast("อนุมัติแล้ว"); m.close(); after(); }).catch(() => {});
+}
+
+/* ---------- เบิกเงินล่วงหน้า ---------- */
+const nextPeriod = p => { const [y, m] = p.split("-").map(Number); return m === 12 ? (y + 1) + "-01" : y + "-" + String(m + 1).padStart(2, "0"); };
+const realChannels = () => listNames("payment_channel").filter(n => !isCreditChannel(n));
+const chanSelect = (name, sel) => `<select class="input" name="${name}">${opt("", "— เลือกบัญชีที่จ่ายเงิน —")}${realChannels().map(n => opt(n, n, n === sel)).join("")}</select>`;
+BRANCH_PAGES.advance = { title: () => "เบิกเงินล่วงหน้า", state: { status: "" }, async render(c) {
+  const st = this.state, self = this, ed = canEdit("advance");
+  c.innerHTML = `<div class="page-head"><div class="grow"><h2>เบิกเงินล่วงหน้า</h2><div class="muted small">ขอเบิก → ผู้อนุมัติกดอนุมัติพร้อมเลือกบัญชีที่จ่าย → ระบบลงรายจ่ายทันที และหักคืนในงวดเงินเดือนอัตโนมัติ (ไม่บันทึกค่าใช้จ่ายซ้ำ)</div></div>${rangeBar()}${ed ? `<button class="btn primary" data-new>${icon("plus")} ขอเบิกเงิน</button>` : ""}</div>
+    <div class="pay-grid" data-kpi style="margin-bottom:14px"></div>
+    <div class="card"><div class="toolbar">${statusSeg(st, ["pending", "approved", "rejected", "cancelled"])}<div class="grow"></div><button class="btn sm" data-csv>${icon("download")} CSV</button></div><div class="tbl-wrap" data-tbl><div class="boot" style="height:160px"><div class="spinner"></div></div></div></div>`;
+  bindRange(c, () => self.render(c));
+  $$("[data-sv]", c).forEach(b => { b.onclick = () => { st.status = b.dataset.sv; self.render(c); }; });
+  const emps = await loadEmps(true);
+  if (ed) $("[data-new]", c).onclick = () => advanceModal(emps, () => self.render(c));
+  const r = await bapi("GET", "/advances?" + rq() + (st.status ? "&status=" + st.status : ""));
+  const A = r.advances;
+  $("[data-kpi]", c).innerHTML = `<div class="mini-kpi"><div class="l">รออนุมัติ</div><div class="v" style="color:${A.some(x => x.status === "pending") ? "var(--warn)" : ""}">${A.filter(x => x.status === "pending").length} รายการ</div></div>
+    <div class="mini-kpi"><div class="l">อนุมัติแล้วในช่วงนี้</div><div class="v">${baht(A.filter(x => x.status === "approved").reduce((a, x) => a + x.amount, 0))}</div></div>
+    <div class="mini-kpi"><div class="l">ยังไม่ได้หักคืน (ทั้งหมด)</div><div class="v" style="color:var(--primary)">${baht(r.outstanding.amount)}</div><div class="small muted">${r.outstanding.count} รายการ</div></div>
+    <div class="mini-kpi"><div class="l">หักคืนแล้วในช่วงนี้</div><div class="v">${baht(A.filter(x => x.payrollRunId).reduce((a, x) => a + x.amount, 0))}</div></div>`;
+  $("[data-tbl]", c).innerHTML = A.length ? `<table class="tbl"><thead><tr><th>วันที่ขอ</th><th>พนักงาน</th><th class="num">จำนวนเงิน</th><th>หักคืนงวด</th><th>เหตุผล</th><th>สถานะ</th><th>จ่ายจาก / เอกสาร</th><th></th></tr></thead><tbody>
+    ${A.map(x => `<tr><td>${thDate(x.date, true)}</td><td class="bold">${esc(x.empName)}</td><td class="num bold">${fmt(x.amount)}</td>
+      <td class="small">${thMonth(x.deductPeriod)}${x.payrollRunId ? `<div><span class="chip good plain">หักคืนแล้ว</span></div>` : ""}</td><td class="small"><div class="desc">${esc(x.reason || "-")}</div><div class="muted">โดย ${esc(x.requestedBy)}</div></td><td>${statusCell(x)}</td>
+      <td class="small">${x.payChannel ? esc(x.payChannel) + " · " + thDate(x.payDate, true) : ""}${x.docNo ? `<div><a href="#" class="doc" data-doc="${x.recordId}">${esc(x.docNo)}</a></div>` : ""}</td>
+      <td style="white-space:nowrap">${x.status === "pending" && r.canApprove ? `<button class="btn sm primary" data-ap="${x.id}">อนุมัติ</button> <button class="btn sm" data-rj="${x.id}">ไม่อนุมัติ</button> ` : ""}
+        ${x.status === "approved" && !x.payrollRunId && r.canApprove ? `<button class="btn sm danger" data-cancel="${x.id}">ยกเลิก</button>` : ""}
+        ${ed && (x.status === "pending" || ((x.status === "rejected" || x.status === "cancelled") && r.canApprove)) ? `<button class="btn ghost sm icon" data-del="${x.id}" title="ลบ">${icon("trash")}</button>` : ""}</td></tr>`).join("")}</tbody></table>` : emptyBox("ไม่มีรายการเบิกเงินในช่วงนี้", "cash");
+  const find = id => A.find(x => x.id === id);
+  $$("[data-doc]", c).forEach(a => { a.onclick = e => { e.preventDefault(); openDoc("expense", a.dataset.doc, () => self.render(c)); }; });
+  $$("[data-ap]", c).forEach(b => { b.onclick = () => advanceApprove(find(b.dataset.ap), () => self.render(c)); });
+  $$("[data-rj]", c).forEach(b => { b.onclick = async () => { const reason = await askReason("ไม่อนุมัติการเบิกเงิน"); if (!reason) return; try { await bapi("POST", "/advances/" + b.dataset.rj + "/approve", { approve: false, reason }); toast("บันทึกแล้ว"); self.render(c); } catch (e) { toast(e.message, "bad"); } }; });
+  $$("[data-cancel]", c).forEach(b => { b.onclick = async () => { const x = find(b.dataset.cancel); if (!await confirmBox(`ยกเลิกการเบิกเงินของ ${x.empName} ${baht(x.amount)}?\nเอกสารรายจ่าย ${x.docNo} ที่สร้างอัตโนมัติจะถูกลบ (เงินกลับเข้าบัญชี ${x.payChannel})`, { danger: true, okText: "ยกเลิกการเบิก" })) return; try { await bapi("POST", "/advances/" + x.id + "/cancel", {}); toast("ยกเลิกแล้ว"); self.render(c); } catch (e) { toast(e.message, "bad"); } }; });
+  $$("[data-del]", c).forEach(b => { b.onclick = async () => { if (!await confirmBox("ลบคำขอเบิกเงินนี้?", { danger: true, okText: "ลบ" })) return; try { await bapi("DELETE", "/advances/" + b.dataset.del); toast("ลบแล้ว"); self.render(c); } catch (e) { toast(e.message, "bad"); } }; });
+  $("[data-csv]", c).onclick = () => downloadCSV("advances-" + S.range.from + "_" + S.range.to + ".csv", [["วันที่", "พนักงาน", "จำนวนเงิน", "หักคืนงวด", "เหตุผล", "สถานะ", "ผู้ขอ", "ผู้อนุมัติ", "จ่ายจาก", "เอกสาร", "หักคืนแล้ว"],
+    ...A.map(x => [x.date, x.empName, x.amount, x.deductPeriod, x.reason, RSTATUS[x.status][0], x.requestedBy, x.approvedBy, x.payChannel, x.docNo, x.payrollRunId ? "ใช่" : ""])]);
+} };
+function advanceModal(emps, after) {
+  const t = today();
+  const m = openModal({ title: "ขอเบิกเงินล่วงหน้า", body: `<div class="grid g2">
+      <label class="field"><span>พนักงาน <em>*</em></span><select class="input" name="employeeId">${empOpts(emps, "", "— เลือกพนักงาน —")}</select></label>
+      <label class="field"><span>จำนวนเงิน (บาท) <em>*</em></span><input class="input num" name="amount" inputmode="decimal" placeholder="0.00"></label>
+      <label class="field"><span>วันที่ขอเบิก</span><input type="date" class="input" name="date" value="${t}"></label>
+      <label class="field"><span>หักคืนในงวดเงินเดือน</span><input type="month" class="input" name="deductPeriod" value="${t.slice(0, 7)}"></label></div>
+    <label class="field" style="margin-top:14px"><span>เหตุผล</span><input class="input" name="reason" placeholder="เช่น ค่าเทอมลูก"></label>
+    ${approver("advance") ? `<div class="card card-b" style="margin-top:14px;background:var(--surface-2)"><label class="check"><input type="checkbox" name="approveNow"> อนุมัติและจ่ายเงินทันที</label><div class="grid g2 hidden" style="margin-top:10px" data-paywrap>
+      <label class="field"><span>จ่ายจากบัญชี</span>${chanSelect("channel", realChannels().find(n => /สด/.test(n)) || "")}</label><label class="field"><span>วันที่จ่าย</span><input type="date" class="input" name="payDate" value="${t}"></label></div></div>` : `<div class="info-box" style="margin-top:14px">คำขอจะรอผู้อนุมัติ เมื่ออนุมัติแล้วระบบจะลงรายจ่ายและหักคืนในงวดเงินเดือนให้อัตโนมัติ</div>`}`,
+    foot: `<button class="btn" data-close>ยกเลิก</button><button class="btn primary" data-ok>${icon("check")} บันทึก</button>` });
+  const an = $("[name=approveNow]", m.el); if (an) an.onchange = () => $("[data-paywrap]", m.el).classList.toggle("hidden", !an.checked);
+  const ok = $("[data-ok]", m.el); ok.onclick = () => withBtn(ok, async () => { const f = formData(m.el); if (!f.employeeId) throw new Error("กรุณาเลือกพนักงาน"); f.amount = num(f.amount, NaN);
+    if (f.approveNow && !f.channel) throw new Error("กรุณาเลือกบัญชีที่จ่ายเงิน");
+    const r = await bapi("POST", "/advances", f); toast(r.docNo ? "อนุมัติและลงรายจ่ายแล้ว · " + r.docNo : "บันทึกคำขอแล้ว · รอผู้อนุมัติ"); m.close(); after(); }).catch(() => {});
+}
+function advanceApprove(x, after) {
+  const m = openModal({ title: "อนุมัติเบิกเงิน · " + esc(x.empName), body: `<div class="mini-kpi" style="margin-bottom:14px"><div class="l">จำนวนเงิน</div><div class="v">${baht(x.amount)}</div><div class="small muted">${esc(x.reason || "")} · ขอโดย ${esc(x.requestedBy)}</div></div>
+    <div class="grid g2"><label class="field"><span>จ่ายจากบัญชี <em>*</em></span>${chanSelect("channel", realChannels().find(n => /สด/.test(n)) || "")}</label><label class="field"><span>วันที่จ่าย</span><input type="date" class="input" name="date" value="${today()}"></label>
+    <label class="field"><span>หักคืนในงวดเงินเดือน</span><input type="month" class="input" name="deductPeriod" value="${esc(x.deductPeriod)}"></label></div>
+    <div class="info-box" style="margin-top:14px">ระบบจะสร้าง <b>เอกสารรายจ่าย</b> ${baht(x.amount)} หักเงินจากบัญชีที่เลือกทันที และหักคืนจากเงินเดือนงวดที่ระบุ (ตอนจ่ายเงินเดือนจะลงรายจ่ายเฉพาะยอดสุทธิ จึงไม่ซ้ำ)</div>`,
+    foot: `<button class="btn" data-close>ยกเลิก</button><button class="btn primary" data-ok>${icon("check")} อนุมัติและจ่ายเงิน</button>` });
+  const ok = $("[data-ok]", m.el); ok.onclick = () => withBtn(ok, async () => { const f = formData(m.el); if (!f.channel) throw new Error("กรุณาเลือกบัญชีที่จ่ายเงิน");
+    const r = await bapi("POST", "/advances/" + x.id + "/approve", { approve: true, ...f }); toast("อนุมัติแล้ว · สร้างเอกสาร " + r.docNo); m.close(); after(); }).catch(() => {});
+}
+
+/* ---------- ลงเวลา / เช็คอิน ---------- */
+const hhmm = ms => ms ? new Date(ms).toLocaleTimeString("th-TH", { timeZone: "Asia/Bangkok", hour: "2-digit", minute: "2-digit" }) : "-";
+const fmtHrs = min => min > 0 ? Math.floor(min / 60) + " ชม. " + String(Math.round(min % 60)).padStart(2, "0") + " น." : "-";
+// รวมรายการเข้า-ออกของแต่ละคนต่อวัน
+function attDays(entries) {
+  const g = {};
+  entries.forEach(e => { const k = e.employeeId + "|" + e.date; (g[k] = g[k] || { employeeId: e.employeeId, empName: e.empName, date: e.date, list: [] }).list.push(e); });
+  return Object.values(g).map(d => {
+    d.list.sort((a, b) => a.at - b.at);
+    const ins = d.list.filter(x => x.kind === "in"), outs = d.list.filter(x => x.kind === "out");
+    let mins = 0, open = null; d.list.forEach(x => { if (x.kind === "in") open = x.at; else if (open) { mins += (x.at - open) / 60000; open = null; } });
+    return { ...d, first: ins[0] || null, last: outs[outs.length - 1] || null, minutes: mins, lateMin: ins[0] ? ins[0].lateMin : 0, manual: d.list.some(x => x.manual), working: !!open };
+  }).sort((a, b) => b.date.localeCompare(a.date) || a.empName.localeCompare(b.empName));
+}
+BRANCH_PAGES.attendance = { title: () => "ลงเวลา / เช็คอิน", state: { tab: "day", day: "", month: "" }, async render(c) {
+  const st = this.state, self = this, ed = canEdit("attendance");
+  st.day = st.day || today(); st.month = st.month || today().slice(0, 7);
+  const link = location.origin + location.pathname + "#/checkin/" + S.bid;
+  c.innerHTML = `<div class="page-head"><div class="grow"><h2>ลงเวลาเข้า-ออกงาน</h2><div class="muted small">พนักงานเช็คอินด้วย GPS ผ่านลิงก์ของสาขา · หัวหน้าดูรายวัน สรุปรายเดือน และเพิ่มรายการเองได้</div></div>${ed ? `<button class="btn primary" data-new>${icon("plus")} เพิ่มรายการเอง</button>` : ""}</div>
+    <div class="card" style="margin-bottom:14px" data-linkcard></div>
+    <div class="tabs"><button data-tab="day" class="${st.tab === "day" ? "on" : ""}">รายวัน</button><button data-tab="month" class="${st.tab === "month" ? "on" : ""}">สรุปรายเดือน</button></div><div data-body><div class="boot" style="height:160px"><div class="spinner"></div></div></div>`;
+  $$("[data-tab]", c).forEach(b => { b.onclick = () => { st.tab = b.dataset.tab; self.render(c); }; });
+  const emps = await loadEmps(true);
+  if (ed) $("[data-new]", c).onclick = () => attManualModal(emps, st.tab === "day" ? st.day : today(), () => self.render(c));
+  const from = st.tab === "day" ? st.day : st.month + "-01", to = st.tab === "day" ? st.day : monthEnd(st.month);
+  const r = await bapi("GET", `/attendance?from=${from}&to=${to}`);
+  const cfg = r.settings;
+  $("[data-linkcard]", c).innerHTML = `<div class="card-b row wrap"><div class="acc-ic">${icon("pin")}</div><div class="grow" style="min-width:220px"><div class="bold">ลิงก์เช็คอินของสาขา ${cfg.enabled ? `<span class="chip good">เปิดใช้งาน</span>` : `<span class="chip bad">ปิดอยู่</span>`}</div>
+    <div class="muted small">${cfg.enabled ? `เข้างาน ${esc(cfg.workStart)} น. · ผ่อนผัน ${cfg.lateGrace} นาที · ต้องอยู่ห่างร้านไม่เกิน ${fmt0(cfg.radius)} เมตร` : "ผู้ดูแลระบบ (Admin) เปิดใช้และตั้งพิกัดร้านได้ที่ จัดการสาขา → ตั้งค่าเช็คอิน"}</div>
+    <div class="small" style="margin-top:4px;word-break:break-all"><a href="${esc(link)}" target="_blank">${esc(link)}</a></div></div><button class="btn sm" data-copy>${icon("copy")} คัดลอกลิงก์</button></div>`;
+  $("[data-copy]", c).onclick = () => { navigator.clipboard && navigator.clipboard.writeText(link).then(() => toast("คัดลอกลิงก์แล้ว — ส่งให้พนักงานเปิดบนมือถือ"), () => toast(link)); };
+  const days = attDays(r.entries); const body = $("[data-body]", c);
+  if (st.tab === "day") {
+    const active = emps.filter(e => e.active);
+    const rows = active.map(e => ({ e, d: days.find(x => x.employeeId === e.id) }));
+    body.innerHTML = `<div class="card"><div class="toolbar"><button class="btn sm icon" data-prev>${icon("back")}</button><input type="date" class="input sm" style="width:160px" value="${st.day}" data-day><button class="btn sm icon" data-next style="transform:scaleX(-1)">${icon("back")}</button><span class="muted small">${wdName(st.day)}</span><div class="grow"></div>
+      <span class="small">มาทำงาน <b>${rows.filter(x => x.d).length}</b> / ${active.length} คน · สาย <b>${rows.filter(x => x.d && x.d.lateMin).length}</b> คน</span></div><div class="tbl-wrap"><table class="tbl"><thead><tr><th>พนักงาน</th><th>เข้างาน</th><th>ออกงาน</th><th class="num">ชั่วโมงทำงาน</th><th>มาสาย</th><th>ระยะห่าง / ที่มา</th><th></th></tr></thead><tbody>
+      ${rows.map(({ e, d }) => !d ? `<tr><td class="bold">${esc(e.name)}</td><td colspan="6" class="muted">ไม่มีการลงเวลา</td></tr>` : `<tr><td class="bold">${esc(e.name)}</td><td>${d.first ? hhmm(d.first.at) : "-"}</td><td>${d.last ? hhmm(d.last.at) : d.working ? `<span class="chip blue">กำลังทำงาน</span>` : "-"}</td>
+        <td class="num">${fmtHrs(d.minutes)}</td><td>${d.lateMin ? `<span class="chip warn">สาย ${d.lateMin} นาที</span>` : `<span class="chip good plain">ตรงเวลา</span>`}</td>
+        <td class="small">${d.list.map(x => `<div>${x.kind === "in" ? "เข้า" : "ออก"} ${hhmm(x.at)} · ${x.manual ? `<span class="chip plain">บันทึกเอง</span> ${esc(x.createdBy)}${x.note ? " · " + esc(x.note) : ""}` : `${x.distance} ม.${x.lat != null ? ` <a href="https://www.google.com/maps?q=${x.lat},${x.lng}" target="_blank">แผนที่</a>` : ""} · ${esc(uaShort(x.ua))}`}
+          ${ed ? ` <button class="btn ghost sm icon" style="height:22px;width:22px" data-delatt="${x.id}" title="ลบ">${icon("x")}</button>` : ""}</div>`).join("")}</td><td></td></tr>`).join("")}</tbody></table></div></div>`;
+    $("[data-day]", body).onchange = e => { st.day = e.target.value || today(); self.render(c); };
+    $("[data-prev]", body).onclick = () => { st.day = addDays(st.day, -1); self.render(c); };
+    $("[data-next]", body).onclick = () => { st.day = addDays(st.day, 1); self.render(c); };
+  } else {
+    const sum = {}; days.forEach(d => { const s = sum[d.employeeId] = sum[d.employeeId] || { name: d.empName, days: 0, late: 0, lateMin: 0, minutes: 0, manual: 0 }; s.days++; if (d.lateMin) { s.late++; s.lateMin += d.lateMin; } s.minutes += d.minutes; if (d.manual) s.manual++; });
+    const list = emps.filter(e => e.active || sum[e.id]).map(e => ({ e, s: sum[e.id] || { days: 0, late: 0, lateMin: 0, minutes: 0, manual: 0 } }));
+    body.innerHTML = `<div class="card"><div class="toolbar"><input type="month" class="input sm" style="width:170px" value="${st.month}" data-month><div class="grow"></div><button class="btn sm" data-csv>${icon("download")} CSV</button></div><div class="tbl-wrap"><table class="tbl"><thead><tr><th>พนักงาน</th><th class="num">วันมาทำงาน</th><th class="num">มาสาย (ครั้ง)</th><th class="num">สายรวม (นาที)</th><th class="num">ชั่วโมงรวม</th><th class="num">วันที่บันทึกเอง</th></tr></thead><tbody>
+      ${list.map(({ e, s }) => `<tr class="click" data-emp="${e.id}"><td class="bold">${esc(e.name)}</td><td class="num bold">${s.days}</td><td class="num ${s.late ? "neg" : ""}">${s.late}</td><td class="num">${s.lateMin}</td><td class="num">${fmtHrs(s.minutes)}</td><td class="num muted">${s.manual}</td></tr>`).join("")}</tbody></table></div></div>
+      <div class="field-hint" style="margin-top:10px">กดที่ชื่อเพื่อดูรายวันของคนนั้น · วันมาทำงานของพนักงานรายวันจะถูกดึงเข้างวดเงินเดือนเมื่อกด “ดึงข้อมูลอัตโนมัติ”</div>`;
+    $("[data-month]", body).onchange = e => { st.month = e.target.value || today().slice(0, 7); self.render(c); };
+    $$("[data-emp]", body).forEach(tr => { tr.onclick = () => { const e = emps.find(x => x.id === tr.dataset.emp); const ds = days.filter(d => d.employeeId === e.id).sort((a, b) => a.date.localeCompare(b.date));
+      openModal({ title: esc(e.name) + " · " + thMonth(st.month), size: "lg", body: ds.length ? `<div class="card tbl-wrap"><table class="tbl"><thead><tr><th>วันที่</th><th>เข้า</th><th>ออก</th><th class="num">ชั่วโมง</th><th>สาย</th><th></th></tr></thead><tbody>${ds.map(d => `<tr><td>${thDate(d.date, true)} <span class="muted small">${wdName(d.date)}</span></td><td>${d.first ? hhmm(d.first.at) : "-"}</td><td>${d.last ? hhmm(d.last.at) : "-"}</td><td class="num">${fmtHrs(d.minutes)}</td><td>${d.lateMin ? d.lateMin + " นาที" : "-"}</td><td>${d.manual ? `<span class="chip plain">บันทึกเอง</span>` : ""}</td></tr>`).join("")}</tbody></table></div>` : emptyBox("ไม่มีการลงเวลาในเดือนนี้", "clock"), foot: `<button class="btn" data-close>ปิด</button>` }); }; });
+    $("[data-csv]", body).onclick = () => downloadCSV("attendance-" + st.month + ".csv", [["พนักงาน", "วันที่", "เข้า", "ออก", "นาทีทำงาน", "สาย (นาที)", "บันทึกเอง"], ...days.slice().reverse().map(d => [d.empName, d.date, d.first ? hhmm(d.first.at) : "", d.last ? hhmm(d.last.at) : "", Math.round(d.minutes), d.lateMin, d.manual ? "ใช่" : ""])]);
+  }
+  $$("[data-delatt]", c).forEach(b => { b.onclick = async () => { if (!await confirmBox("ลบรายการลงเวลานี้?", { danger: true, okText: "ลบ" })) return; await bapi("DELETE", "/attendance/" + b.dataset.delatt); toast("ลบแล้ว"); self.render(c); }; });
+} };
+function attManualModal(emps, day, after) {
+  const m = openModal({ title: "เพิ่มรายการลงเวลาเอง", body: `<div class="grid g2"><label class="field"><span>พนักงาน <em>*</em></span><select class="input" name="employeeId">${empOpts(emps, "", "— เลือกพนักงาน —")}</select></label><label class="field"><span>วันที่</span><input type="date" class="input" name="date" value="${day}"></label>
+    <label class="field"><span>เวลาเข้า</span><input type="time" class="input" name="timeIn" value="${esc(S.binfo.branch.checkin.workStart)}"></label><label class="field"><span>เวลาออก (ไม่บังคับ)</span><input type="time" class="input" name="timeOut"></label></div>
+    <label class="field" style="margin-top:14px"><span>หมายเหตุ</span><input class="input" name="note" placeholder="เช่น ลืมเช็คอิน, มือถือแบตหมด"></label><div class="field-hint" style="margin-top:8px">รายการนี้จะแสดงว่า “บันทึกเอง” พร้อมชื่อผู้บันทึก และเก็บใน Log</div>`,
+    foot: `<button class="btn" data-close>ยกเลิก</button><button class="btn primary" data-ok>${icon("check")} บันทึก</button>` });
+  const ok = $("[data-ok]", m.el); ok.onclick = () => withBtn(ok, async () => { const f = formData(m.el); if (!f.employeeId) throw new Error("กรุณาเลือกพนักงาน"); await bapi("POST", "/attendance", f); toast("บันทึกแล้ว"); m.close(); after(); }).catch(() => {});
+}
+
+/* ---------- รออนุมัติ ---------- */
+BRANCH_PAGES.approvals = { title: () => "รออนุมัติ", async render(c) {
+  const self = this;
+  c.innerHTML = `<div class="page-head"><div class="grow"><h2>รายการรออนุมัติ</h2><div class="muted small">สต็อก / การลา / การเบิกเงิน ที่รอคุณพิจารณา</div></div></div><div data-body><div class="boot" style="height:200px"><div class="spinner"></div></div></div>`;
+  const r = await bapi("GET", "/approvals"); const after = async () => { await refreshPending(); renderBranch(S.bid, "approvals", []); };
+  let html = "";
+  if (r.approve.stock) html += `<div class="card" style="margin-bottom:14px"><div class="card-h"><h3 class="grow">${icon("stock", "").replace("<svg", '<svg style="width:17px;height:17px;vertical-align:-3px"')} สต็อก <span class="chip warn plain">${r.stock.length}</span></h3>${r.stock.length > 1 ? `<button class="btn sm primary" data-allst>อนุมัติที่เลือก</button><button class="btn sm" data-rjst>ไม่อนุมัติที่เลือก</button>` : ""}</div>
+    ${r.stock.length ? `<div class="tbl-wrap"><table class="tbl"><thead><tr><th style="width:30px"><input type="checkbox" data-chkall checked></th><th>วันที่</th><th>สินค้า</th><th>ประเภท</th><th class="num">จำนวน</th><th class="num">คงเหลือตอนนี้</th><th>ผู้บันทึก / หมายเหตุ</th><th></th></tr></thead><tbody>
+      ${r.stock.map(m => `<tr><td><input type="checkbox" data-chk="${m.id}" checked></td><td>${thDate(m.date, true)}</td><td class="bold">${esc(m.itemName)}</td><td><span class="chip ${MOVE[m.kind].chip}">${MOVE[m.kind].th}</span></td>
+        <td class="num bold">${m.kind === "count" ? "นับได้ " + fmtQ(m.counted) : (m.qty > 0 ? "+" : "") + fmtQ(m.qty)} <span class="muted small">${esc(m.unit)}</span>${m.kind === "in" && m.unitCost ? `<div class="muted small">@ ${fmt(m.unitCost)}</div>` : ""}</td>
+        <td class="num">${fmtQ(m.itemQty)}${m.kind === "count" ? `<div class="small ${m.counted - m.itemQty < 0 ? "neg" : "pos"}">ต่าง ${fmtQ(m.counted - m.itemQty)}</div>` : ""}</td><td class="small">${esc(m.createdBy)}<div class="muted">${thDateTime(m.createdAt)}${m.note ? " · " + esc(m.note) : ""}</div></td>
+        <td style="white-space:nowrap"><button class="btn sm primary" data-apmove="${m.id}">อนุมัติ</button> <button class="btn sm" data-rjmove="${m.id}">ไม่อนุมัติ</button></td></tr>`).join("")}</tbody></table></div>` : emptyBox("ไม่มีรายการสต็อกรออนุมัติ", "check")}</div>`;
+  if (r.approve.leave) html += `<div class="card" style="margin-bottom:14px"><div class="card-h"><h3 class="grow">${icon("calendar", "").replace("<svg", '<svg style="width:17px;height:17px;vertical-align:-3px"')} ขาด-ลา <span class="chip warn plain">${r.leaves.length}</span></h3></div>
+    ${r.leaves.length ? r.leaves.map(x => `<div class="list-row"><div class="grow"><div class="bold">${esc(x.empName)} · <span class="chip ${LEAVE_CHIP[x.kind]} plain">${esc(x.kindTh)}</span></div><div class="muted small">${thDate(x.dateFrom)}${x.dateTo !== x.dateFrom ? " – " + thDate(x.dateTo) : ""} · ${x.kind === "late" ? x.minutes + " นาที" : fmtQ(x.days) + " วัน"} · หัก ${baht(x.deduct)}${x.reason ? " · " + esc(x.reason) : ""} · โดย ${esc(x.requestedBy)}</div></div>
+      <button class="btn sm primary" data-aplv="${x.id}">อนุมัติ</button><button class="btn sm" data-rjlv="${x.id}">ไม่อนุมัติ</button></div>`).join("") : emptyBox("ไม่มีรายการลารออนุมัติ", "check")}</div>`;
+  if (r.approve.advance) html += `<div class="card" style="margin-bottom:14px"><div class="card-h"><h3 class="grow">${icon("cash", "").replace("<svg", '<svg style="width:17px;height:17px;vertical-align:-3px"')} เบิกเงินล่วงหน้า <span class="chip warn plain">${r.advances.length}</span></h3></div>
+    ${r.advances.length ? r.advances.map(x => `<div class="list-row"><div class="grow"><div class="bold">${esc(x.empName)} · ${baht(x.amount)}</div><div class="muted small">${thDate(x.date)} · หักคืนงวด ${thMonth(x.deductPeriod)}${x.reason ? " · " + esc(x.reason) : ""} · โดย ${esc(x.requestedBy)}</div></div>
+      <button class="btn sm primary" data-apadv="${x.id}">อนุมัติ</button><button class="btn sm" data-rjadv="${x.id}">ไม่อนุมัติ</button></div>`).join("") : emptyBox("ไม่มีคำขอเบิกเงินรออนุมัติ", "check")}</div>`;
+  $("[data-body]", c).innerHTML = html;
+  bindMoveDeletes(c, after);
+  const picked = () => $$("[data-chk]", c).filter(x => x.checked).map(x => x.dataset.chk);
+  const ca = $("[data-chkall]", c); if (ca) ca.onchange = () => $$("[data-chk]", c).forEach(x => { x.checked = ca.checked; });
+  const as = $("[data-allst]", c); if (as) as.onclick = () => { const ids = picked(); if (!ids.length) return toast("ยังไม่ได้เลือกรายการ", "bad"); stockDecide(ids, true, after); };
+  const rs = $("[data-rjst]", c); if (rs) rs.onclick = () => { const ids = picked(); if (!ids.length) return toast("ยังไม่ได้เลือกรายการ", "bad"); stockDecide(ids, false, after); };
+  $$("[data-aplv]", c).forEach(b => { b.onclick = () => leaveApprove(r.leaves.find(x => x.id === b.dataset.aplv), after); });
+  $$("[data-rjlv]", c).forEach(b => { b.onclick = async () => { const reason = await askReason("ไม่อนุมัติการลา"); if (!reason) return; try { await bapi("POST", "/leaves/" + b.dataset.rjlv + "/approve", { approve: false, reason }); toast("บันทึกแล้ว"); after(); } catch (e) { toast(e.message, "bad"); } }; });
+  $$("[data-apadv]", c).forEach(b => { b.onclick = () => advanceApprove(r.advances.find(x => x.id === b.dataset.apadv), after); });
+  $$("[data-rjadv]", c).forEach(b => { b.onclick = async () => { const reason = await askReason("ไม่อนุมัติการเบิกเงิน"); if (!reason) return; try { await bapi("POST", "/advances/" + b.dataset.rjadv + "/approve", { approve: false, reason }); toast("บันทึกแล้ว"); after(); } catch (e) { toast(e.message, "bad"); } }; });
+} };
+
+/* ---------- งบการเงิน ---------- */
+BRANCH_PAGES.statements = { title: () => "งบการเงิน", state: { tab: "pl", date: "", inv: true }, async render(c) {
+  const st = this.state, self = this; st.date = st.date || today();
+  c.innerHTML = `<div class="page-head"><div class="grow"><h2>งบการเงิน</h2><div class="muted small">ตัวเลขไม่รวม VAT · จัดกลุ่มตามที่ตั้งไว้ในเมนู “หมวด & ช่องทาง” (หมวดที่ยังไม่ตั้ง ระบบเดาจากชื่อ)</div></div>
+    ${st.tab === "pl" ? rangeBar() : `<label class="row"><span class="muted small">ณ วันที่</span><input type="date" class="input sm" style="width:160px" value="${st.date}" data-date></label>`}
+    <label class="check small" title="ใช้มูลค่าสต็อกจากระบบ ปรับต้นทุนขายด้วยสินค้าคงเหลือต้นงวด/ปลายงวด"><input type="checkbox" data-inv ${st.inv ? "checked" : ""}> ปรับสินค้าคงเหลือ (ตรวจนับ)</label><button class="btn" data-print>${icon("print")} พิมพ์ / PDF</button></div>
+    <div class="tabs"><button data-tab="pl" class="${st.tab === "pl" ? "on" : ""}">งบกำไรขาดทุน (P&L)</button><button data-tab="bs" class="${st.tab === "bs" ? "on" : ""}">งบแสดงฐานะการเงิน (BS)</button></div>
+    <div data-body><div class="boot" style="height:240px"><div class="spinner"></div></div></div>`;
+  $$("[data-tab]", c).forEach(b => { b.onclick = () => { st.tab = b.dataset.tab; self.render(c); }; });
+  $("[data-inv]", c).onchange = e => { st.inv = e.target.checked; self.render(c); };
+  if (st.tab === "pl") bindRange(c, () => self.render(c)); else $("[data-date]", c).onchange = e => { st.date = e.target.value || today(); self.render(c); };
+  const L = (name, v, o = {}) => `<tr class="${o.cls || ""}"><td style="padding-left:${o.indent ? 30 : 14}px">${o.bold ? `<b>${name}</b>` : name}</td><td class="num ${o.bold ? "bold" : ""} ${v < 0 ? "neg" : ""}">${v == null ? "" : (o.paren && v ? "(" + fmt(Math.abs(v)) + ")" : fmt(v))}</td></tr>`;
+  const lines = arr => arr.map(x => L(esc(x.name), x.amount, { indent: true })).join("");
+  let html, title, sub;
+  if (st.tab === "pl") {
+    const p = await bapi("GET", `/statements/pl?${rq()}&inv=${st.inv ? 1 : 0}`);
+    const sec = (t, o) => o.lines.length ? L(t, null, { bold: true }) + lines(o.lines) + L("รวม" + t, o.total, { cls: "subtot" }) : L(t, 0, { bold: true });
+    html = `<table class="tbl fs"><tbody>
+      ${L("รายได้จากการขาย", null, { bold: true })}${lines(p.sales.lines)}${L("รวมรายได้จากการขาย", p.sales.total, { cls: "subtot" })}
+      ${L("ต้นทุนขาย", null, { bold: true })}${p.useInventory ? L("สินค้าคงเหลือต้นงวด", p.cogs.beginInventory, { indent: true }) : ""}
+      ${lines(p.cogs.purchaseLines.map(x => ({ ...x, name: "ซื้อ: " + x.name })))}${p.useInventory && p.cogs.otherIn ? L("สินค้ารับเข้าที่ไม่ผ่านการซื้อ (ยอดยกมา / รับเข้าเอง)", p.cogs.otherIn, { indent: true }) : ""}
+      ${p.useInventory ? L("หัก สินค้าคงเหลือปลายงวด", -p.cogs.endInventory, { indent: true, paren: true }) : ""}${L("รวมต้นทุนขาย", p.cogs.total, { cls: "subtot" })}
+      ${L("กำไรขั้นต้น", p.grossProfit, { bold: true, cls: "tot" })}<tr><td class="muted small" style="padding-left:30px">อัตรากำไรขั้นต้น</td><td class="num muted small">${p.grossMargin}%</td></tr>
+      ${sec("ค่าใช้จ่ายในการขาย", p.selling)}${sec("ค่าใช้จ่ายพนักงาน", p.staff)}${sec("ค่าใช้จ่ายบริหาร", p.admin)}
+      ${L("กำไร (ขาดทุน) จากการดำเนินงาน", p.operatingProfit, { bold: true, cls: "tot" })}
+      ${p.otherIncome.lines.length ? sec("รายได้อื่น", p.otherIncome) : ""}${p.otherExpense.lines.length ? sec("ค่าใช้จ่ายอื่น", p.otherExpense) : ""}
+      ${L("กำไร (ขาดทุน) ก่อนภาษีเงินได้", p.profitBeforeTax, { bold: true, cls: "tot" })}${L("ภาษีเงินได้", p.incomeTax.total, { indent: true })}
+      ${L("กำไร (ขาดทุน) สุทธิ", p.netProfit, { bold: true, cls: "grand" })}<tr><td class="muted small" style="padding-left:30px">อัตรากำไรสุทธิ</td><td class="num muted small">${p.netMargin}%</td></tr></tbody></table>`;
+    title = "งบกำไรขาดทุน"; sub = "สำหรับงวด " + thDate(p.from) + " – " + thDate(p.to);
+  } else {
+    const b = await bapi("GET", `/statements/bs?date=${st.date}&inv=${st.inv ? 1 : 0}`);
+    html = `<table class="tbl fs"><tbody>${L("สินทรัพย์", null, { bold: true, cls: "head" })}${L("สินทรัพย์หมุนเวียน", null, { bold: true })}
+      ${b.assets.current.map(x => L(esc(x.name), x.amount, { indent: true }) + (x.lines && x.lines.length > 1 ? x.lines.map(y => `<tr class="muted small"><td style="padding-left:48px">${esc(y.name)}</td><td class="num">${fmt(y.amount)}</td></tr>`).join("") : "")).join("")}
+      ${L("รวมสินทรัพย์หมุนเวียน", b.assets.currentTotal, { cls: "subtot" })}${L("สินทรัพย์ถาวร (ราคาทุน ยังไม่หักค่าเสื่อม)", null, { bold: true })}
+      ${b.assets.fixed.length ? b.assets.fixed.map(x => L(esc(x.name), x.amount, { indent: true })).join("") : L("ไม่มี", 0, { indent: true })}
+      ${L("รวมสินทรัพย์ถาวร", b.assets.fixedTotal, { cls: "subtot" })}${L("รวมสินทรัพย์", b.assets.total, { bold: true, cls: "grand" })}
+      ${L("หนี้สินและส่วนของเจ้าของ", null, { bold: true, cls: "head" })}${L("หนี้สินหมุนเวียน", null, { bold: true })}${b.liabilities.lines.map(x => L(esc(x.name), x.amount, { indent: true })).join("")}
+      ${L("รวมหนี้สิน", b.liabilities.total, { cls: "subtot" })}${L("ส่วนของเจ้าของ", null, { bold: true })}
+      ${L("ทุน / ยอดยกมา (คำนวณให้งบดุล)", b.equity.capital, { indent: true })}${L("กำไร (ขาดทุน) สะสม", b.equity.retained, { indent: true })}
+      <tr class="muted small"><td style="padding-left:48px">ในจำนวนนี้ เป็นกำไรตั้งแต่ต้นปี ${Number(b.date.slice(0, 4)) + 543}</td><td class="num">${fmt(b.equity.retainedYtd)}</td></tr>
+      ${L("รวมส่วนของเจ้าของ", b.equity.total, { cls: "subtot" })}${L("รวมหนี้สินและส่วนของเจ้าของ", b.totalLiabEquity, { bold: true, cls: "grand" })}</tbody></table>
+      <div class="field-hint" style="padding:10px 14px">“ทุน / ยอดยกมา” คำนวณจาก สินทรัพย์ − หนี้สิน − กำไรสะสม ประกอบด้วยยอดเงินยกมาของแต่ละบัญชี สต็อกยกมา และเงินที่เจ้าของนำเข้า/ถอนออก</div>`;
+    title = "งบแสดงฐานะการเงิน"; sub = "ณ วันที่ " + thDate(b.date);
+  }
+  $("[data-body]", c).innerHTML = `<div class="card fs-card"><div class="card-h"><div class="grow"><h3>${title}</h3><div class="muted small">${sub}${st.inv ? "" : " · ไม่ปรับสินค้าคงเหลือ"}</div></div></div><div class="card-b flush">${html}</div></div>`;
+  $("[data-print]", c).onclick = () => printHTML(title, companyHead(title, sub) + html, `.fs td{border-bottom:1px solid #eef0f4}.fs .subtot td{border-top:1px solid #d3d8e2;font-weight:600}.fs .tot td{background:#f4f6fa;font-weight:700}.fs .grand td{border-top:2px solid #18212f;border-bottom:3px double #18212f;font-weight:700}.fs .head td{background:#eef4ff;color:#1f6feb}.neg{color:#d92d20}.muted{color:#7b8597}.small{font-size:11px}.field-hint{font-size:11px;color:#7b8597;margin-top:10px}`);
+} };
+
+/* ---------- log การใช้งาน ---------- */
+function uaShort(ua) {
+  ua = String(ua || ""); if (!ua) return "-";
+  const dev = /iPad/.test(ua) ? "iPad" : /iPhone/.test(ua) ? "iPhone" : /Android/.test(ua) ? (/Mobile/.test(ua) ? "Android" : "แท็บเล็ต Android") : /Windows/.test(ua) ? "Windows" : /Macintosh|Mac OS X/.test(ua) ? "Mac" : /Linux/.test(ua) ? "Linux" : /node|curl/i.test(ua) ? "ระบบ" : "อุปกรณ์อื่น";
+  const br = /Edg\//.test(ua) ? "Edge" : /Line\//.test(ua) ? "LINE" : /FBAN|FBAV/.test(ua) ? "Facebook" : /CriOS|Chrome\//.test(ua) ? "Chrome" : /FxiOS|Firefox\//.test(ua) ? "Firefox" : /Safari\//.test(ua) ? "Safari" : "";
+  return dev + (br ? " · " + br : "");
+}
+const ACT_TH = { login: "เข้าสู่ระบบ", login_fail: "เข้าระบบไม่สำเร็จ", access_denied: "ไม่มีสิทธิ์", checkin: "เช็คอิน", checkout: "เช็คเอาท์", checkin_fail: "เช็คอินไม่สำเร็จ" };
+function activityTable(a, showBranch) {
+  if (!a.length) return emptyBox("ไม่มีประวัติในช่วงนี้", "history");
+  return `<table class="tbl"><thead><tr><th>เมื่อไร</th><th>ใคร</th>${showBranch ? "<th>สาขา</th>" : ""}<th>ทำอะไร</th><th>อย่างไร (IP · อุปกรณ์ · พิกัด)</th></tr></thead><tbody>${a.map(x => {
+    const bad = /fail|denied/.test(x.action);
+    return `<tr><td class="small" style="white-space:nowrap">${thDateTime(x.at)}</td><td><span class="chip ${x.kind === "admin" ? "blue" : x.kind === "employee" ? "good" : ""} plain">${esc(x.actor)}</span></td>${showBranch ? `<td class="small">${esc(x.branchName || "-")}</td>` : ""}
+      <td>${ACT_TH[x.action] ? `<span class="chip ${bad ? "bad" : "good"} plain">${ACT_TH[x.action]}</span> ` : ""}${esc(x.detail)}</td>
+      <td class="small" style="white-space:nowrap">${esc(x.ip || "-")}<div class="muted">${esc(uaShort(x.ua))}</div>${x.lat != null ? `<a href="https://www.google.com/maps?q=${x.lat},${x.lng}" target="_blank">${icon("pin", "").replace("<svg", '<svg style="width:12px;height:12px;vertical-align:-2px"')} ${x.lat.toFixed(5)}, ${x.lng.toFixed(5)}</a>` : ""}</td></tr>`; }).join("")}</tbody></table>`;
+}
+function activityCsv(name, a) { downloadCSV(name, [["เวลา", "ผู้ใช้", "สาขา", "การกระทำ", "รายละเอียด", "IP", "อุปกรณ์", "User-Agent", "ละติจูด", "ลองจิจูด"], ...a.map(x => [new Date(x.at).toLocaleString("th-TH", { timeZone: "Asia/Bangkok" }), x.actor, x.branchName, x.action, x.detail, x.ip, uaShort(x.ua), x.ua, x.lat, x.lng])]); }
+BRANCH_PAGES.log = { title: () => "Log การใช้งาน", state: { actor: "", kind: "" }, async render(c) {
+  const st = this.state, self = this;
+  c.innerHTML = `<div class="page-head"><div class="grow"><h2>Log การใช้งานของสาขา</h2><div class="muted small">ใคร ทำอะไร เมื่อไร อย่างไร — รวมการใส่รหัสผิด การพยายามเข้าเมนูที่ไม่มีสิทธิ์ และการเช็คอิน</div></div>${rangeBar()}</div>
+    <div class="card"><div class="toolbar"><select class="input" style="width:240px" data-actor></select><select class="input" style="width:200px" data-kind>${opt("", "ทุกการกระทำ")}${opt("sec", "เฉพาะความปลอดภัย (รหัสผิด / ไม่มีสิทธิ์)", st.kind === "sec")}${opt("att", "เฉพาะเช็คอิน", st.kind === "att")}</select><div class="grow"></div><button class="btn sm" data-csv>${icon("download")} CSV</button></div><div class="tbl-wrap" data-tbl><div class="boot" style="height:160px"><div class="spinner"></div></div></div></div>`;
+  bindRange(c, () => self.render(c));
+  const all = (await bapi("GET", "/activity?limit=3000&" + rq())).activity;
+  const actors = [...new Set(all.map(x => x.actor))].sort();
+  $("[data-actor]", c).innerHTML = opt("", "ผู้ใช้ทุกคน (" + actors.length + ")") + actors.map(a => opt(a, a, a === st.actor)).join("");
+  const filt = () => all.filter(x => (!st.actor || x.actor === st.actor) && (!st.kind || (st.kind === "sec" ? /fail|denied/.test(x.action) : /^check/.test(x.action))));
+  const draw = () => { $("[data-tbl]", c).innerHTML = activityTable(filt(), false); };
+  $("[data-actor]", c).onchange = e => { st.actor = e.target.value; draw(); };
+  $("[data-kind]", c).onchange = e => { st.kind = e.target.value; draw(); };
+  $("[data-csv]", c).onclick = () => activityCsv("log-" + S.binfo.branch.name + "-" + S.range.from + "_" + S.range.to + ".csv", filt());
+  draw();
+} };
+
+/* ---------- หน้าเช็คอินพนักงาน (สาธารณะ ใช้บนมือถือ) ---------- */
+async function renderCheckin(bid) {
+  const app = $("#app");
+  let info; try { info = await api("GET", "/api/checkin/" + bid); } catch (e) { app.innerHTML = `<div class="auth-wrap"><div class="auth-card"><div class="err-box">${esc(e.message)}</div></div></div>`; return; }
+  document.title = "เช็คอิน · " + info.branch.name;
+  let saved = {}; try { saved = JSON.parse(localStorage.getItem("ci_" + bid) || "{}"); } catch (e) {}
+  const clock = () => new Date().toLocaleTimeString("th-TH", { timeZone: "Asia/Bangkok", hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  app.innerHTML = `<div class="auth-wrap ci"><div class="auth-card" style="max-width:420px">
+    <div class="row"><div class="branch-dot" style="background:${esc(info.branch.color || "#1f6feb")}">${esc(info.branch.code || initials(info.branch.name))}</div><div class="grow"><div class="bold">${esc(info.branch.name)}</div><div class="muted small">${esc(info.company.name)} · ลงเวลาเข้า-ออกงาน</div></div></div>
+    <div class="ci-clock" data-clock>${clock()}</div><div class="muted small" style="text-align:center;margin-top:-6px">${thDate(today())} · เข้างาน ${esc(info.workStart)} น.</div>
+    ${!info.enabled ? `<div class="warn-box" style="margin-top:18px">สาขานี้ยังไม่เปิดระบบเช็คอิน — แจ้งผู้ดูแลระบบ</div>` : `
+    <div data-err style="margin-top:14px"></div><div class="stack">
+      <label class="field"><span>ชื่อของคุณ</span><select class="input" name="emp" style="height:46px;font-size:16px">${opt("", "— เลือกชื่อ —")}${info.employees.map(e => opt(e.id, e.name + (e.nickname ? " (" + e.nickname + ")" : "") + (e.hasPin ? "" : " · ยังไม่มี PIN"), e.id === saved.emp)).join("")}</select></label>
+      <label class="field"><span>PIN</span><input class="input" name="pin" type="password" inputmode="numeric" maxlength="6" autocomplete="off" style="height:46px;font-size:20px;letter-spacing:.4em;text-align:center" placeholder="••••"></label>
+      <div class="grid g2" style="grid-template-columns:1fr 1fr"><button class="btn primary ci-btn" data-act="in">${icon("income")} เช็คอิน</button><button class="btn ci-btn" data-act="out">${icon("logout")} เช็คเอาท์</button></div>
+      <button class="btn ghost sm" data-act="status">ดูเวลาของฉันวันนี้</button></div>
+    <div data-result style="margin-top:14px"></div>
+    <div class="field-hint" style="margin-top:14px;text-align:center">${icon("pin", "").replace("<svg", '<svg style="width:13px;height:13px;vertical-align:-2px"')} ต้องเปิด GPS / Location และอยู่ในระยะ ${fmt0(info.radius)} เมตรจากร้าน</div>`}
+  </div></div>`;
+  const tick = setInterval(() => { const el = $("[data-clock]"); if (!el) return clearInterval(tick); el.textContent = clock(); }, 1000);
+  if (!info.enabled) return;
+  const err = m => { $("[data-err]").innerHTML = m ? `<div class="err-box">${esc(m)}</div>` : ""; };
+  const getPos = () => new Promise((res, rej) => { if (!navigator.geolocation) return rej(new Error("อุปกรณ์นี้ไม่รองรับ GPS"));
+    navigator.geolocation.getCurrentPosition(p => res(p.coords), e => rej(new Error(e.code === 1 ? "กรุณาอนุญาตให้เว็บนี้ใช้ตำแหน่ง (Location) แล้วลองใหม่" : "อ่านตำแหน่งไม่ได้ — ลองออกไปที่โล่ง หรือเปิด GPS")), { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }); });
+  const showToday = r => { $("[data-result]").innerHTML = `<div class="card"><div class="card-b"><div class="bold" style="margin-bottom:6px">${esc(r.employee.name)} · วันนี้</div>${r.today.length ? r.today.map(x => `<div class="row small" style="justify-content:space-between;padding:3px 0"><span>${x.kind === "in" ? "🟢 เข้างาน" : "🔴 ออกงาน"}</span><b>${hhmm(x.at)} น.</b><span class="muted">${x.manual ? "บันทึกโดยหัวหน้า" : x.distance + " ม."}${x.lateMin ? ` · <span class="neg">สาย ${x.lateMin} นาที</span>` : ""}</span></div>`).join("") : `<div class="muted small">ยังไม่มีการลงเวลาวันนี้</div>`}</div></div>`; };
+  $$("[data-act]").forEach(b => { b.onclick = () => withBtn(b, async () => {
+    err(""); const emp = $("[name=emp]").value, pin = $("[name=pin]").value.trim(), action = b.dataset.act;
+    if (!emp) throw new Error("กรุณาเลือกชื่อของคุณ"); if (!pin) throw new Error("กรุณาใส่ PIN");
+    try { localStorage.setItem("ci_" + bid, JSON.stringify({ emp })); } catch (e) {}
+    let pos = {}; if (action !== "status") { const c = await getPos(); pos = { lat: c.latitude, lng: c.longitude, accuracy: c.accuracy }; }
+    const r = await api("POST", "/api/checkin/" + bid, { employeeId: emp, pin, action, ...pos }, { noRedirect: true });
+    if (action !== "status") toast((action === "in" ? "เช็คอินสำเร็จ " : "เช็คเอาท์สำเร็จ ") + hhmm(r.at) + " น." + (r.lateMin ? " · สาย " + r.lateMin + " นาที" : ""));
+    $("[name=pin]").value = ""; showToday(r);
+  }).catch(e => err(e.message)); });
+}
+
 /* ---------- settings: lists ---------- */
 const LIST_LABEL = { income_category: "หมวดรายรับ", expense_category: "หมวดรายจ่าย", invest_category: "หมวดสินทรัพย์", vendor: "ผู้ขาย / ร้านค้า", payment_channel: "ช่องทางชำระเงิน", stock_category: "หมวดสต็อก", unit: "หน่วยนับ" };
 async function listsEditor(c, bid, token, state) {
   const call = (m, p, b) => api(m, "/api/b/" + bid + p, b, { token });
-  const lists = (await call("GET", "/lists")).lists;
+  const lr = await call("GET", "/lists"); const lists = lr.lists, FSG = lr.fsGroups || {};
   if (bid === S.bid) S.lists = lists;
   const k = state.kind;
+  const ro = bid === S.bid && !S.adminToken && !canEdit("settings");
+  const fsSel = x => FSG[k] ? `<label class="row small" style="gap:6px"><span class="muted">กลุ่มในงบ</span><select class="input sm" style="width:190px" data-fs="${x.id}" ${ro ? "disabled" : ""}>${opt("", "อัตโนมัติ: " + (FSG[k][x.fsGuess] || "-"), !x.fsGroup)}${Object.keys(FSG[k]).map(g => opt(g, FSG[k][g], g === x.fsGroup)).join("")}</select></label>` : "";
   c.innerHTML = `<div class="tabs">${Object.keys(LIST_LABEL).map(x => `<button data-k="${x}" class="${x === k ? "on" : ""}">${LIST_LABEL[x]} <span class="muted small">${lists[x].length}</span></button>`).join("")}</div>
     <div class="card"><div class="toolbar"><input class="input" style="max-width:360px" placeholder="เพิ่ม${LIST_LABEL[k]}ใหม่…" data-new>${k === "payment_channel" ? `<label class="check"><input type="checkbox" data-credit> มีวันครบกำหนด (เครดิต/ค้างชำระ)</label>` : ""}<button class="btn primary" data-add>${icon("plus")} เพิ่ม</button></div>
     ${k === "payment_channel" ? `<div class="info-box" style="margin:12px 14px 0">ช่องทางที่ติ๊ก “มีวันครบกำหนด” จะให้ใส่วันครบชำระ และแสดงในรายการค้างรับ/ค้างจ่ายจนกว่าจะกดว่าชำระแล้ว</div>` : ""}
     <div data-rows>${lists[k].map((x, i) => `<div class="list-row"><div class="row" style="gap:2px"><button class="btn ghost sm icon" data-up="${i}" ${i ? "" : "disabled"}>${icon("up")}</button><button class="btn ghost sm icon" data-dn="${i}" ${i < lists[k].length - 1 ? "" : "disabled"}>${icon("down")}</button></div>
-      <div class="grow bold">${esc(x.name)}</div>${k === "payment_channel" ? `<label class="check small"><input type="checkbox" data-cr="${x.id}" ${x.isCredit ? "checked" : ""}> มีวันครบกำหนด</label>` : ""}
+      <div class="grow bold">${esc(x.name)}</div>${fsSel(x)}${k === "payment_channel" ? `<label class="check small"><input type="checkbox" data-cr="${x.id}" ${x.isCredit ? "checked" : ""}> มีวันครบกำหนด</label>` : ""}
       <button class="btn ghost sm" data-ren="${x.id}">${icon("edit")} เปลี่ยนชื่อ</button><button class="btn ghost sm icon" data-del="${x.id}">${icon("trash")}</button></div>`).join("") || emptyBox("ยังไม่มีรายการ")}</div></div>
+    ${FSG[k] ? `<div class="info-box" style="margin-top:12px">“กลุ่มในงบ” ใช้จัดหมวดนี้ลงในงบกำไรขาดทุน / งบแสดงฐานะการเงิน — ถ้าไม่เลือก ระบบจะเดาจากชื่อหมวด (แสดงในวงเล็บ “อัตโนมัติ”)</div>` : ""}
     <div class="field-hint" style="margin-top:10px">เปลี่ยนชื่อหมวด → เอกสารเก่าที่ใช้ชื่อเดิมจะเปลี่ยนตามให้อัตโนมัติ · ลบหมวด → เอกสารเก่ายังคงชื่อเดิมไว้</div>`;
+  if (ro) $$("[data-add],[data-new],[data-credit],[data-up],[data-dn],[data-cr],[data-ren],[data-del]", c).forEach(x => { x.disabled = true; });
+  $$("[data-fs]", c).forEach(sel => { sel.onchange = async () => { try { await call("PUT", "/lists/" + sel.dataset.fs, { fsGroup: sel.value }); toast("บันทึกกลุ่มในงบแล้ว"); } catch (e) { toast(e.message, "bad"); } }; });
   const re = () => listsEditor(c, bid, token, state);
   $$("[data-k]", c).forEach(b => { b.onclick = () => { state.kind = b.dataset.k; re(); }; });
   const add = async () => { const v = $("[data-new]", c).value.trim(); if (!v) return; try { await call("POST", "/lists", { kind: k, name: v, isCredit: !!($("[data-credit]", c) || {}).checked }); toast("เพิ่มแล้ว"); re(); } catch (e) { toast(e.message, "bad"); } };
@@ -1001,7 +1491,16 @@ BRANCH_PAGES.settings = { title: () => "หมวด & ช่องทาง", s
   const inner = document.createElement("div"); c.innerHTML = `<div class="page-head"><div class="grow"><h2>หมวด & ช่องทางของสาขา</h2></div></div>`; c.appendChild(inner);
   await listsEditor(inner, S.bid, tokenFor(S.bid), this.state);
 } };
-BRANCH_PAGES.password = { title: () => "เปลี่ยนรหัสผ่านสาขา", async render(c) {
+BRANCH_PAGES.password = { title: () => S.binfo.me.kind === "user" ? "เปลี่ยนรหัสผ่านของฉัน" : "เปลี่ยนรหัสผ่านสาขา", async render(c) {
+  if (S.binfo.me.kind === "user") {
+    c.innerHTML = `<div class="card" style="max-width:480px"><div class="card-h"><h3>บัญชีผู้ใช้: ${esc(S.binfo.me.username)}</h3></div><form class="card-b stack" data-f>
+      <label class="field"><span>รหัสผ่านปัจจุบัน</span>${pwInput("oldPassword", "", "current-password")}</label><label class="field"><span>รหัสผ่านใหม่ (อย่างน้อย 6 ตัว)</span>${pwInput("newPassword", "", "new-password")}</label><label class="field"><span>ยืนยันรหัสผ่านใหม่</span>${pwInput("confirm", "", "new-password")}</label>
+      <div class="field-hint">อุปกรณ์อื่นที่เข้าด้วยบัญชีนี้อยู่จะถูกออกจากระบบ</div><button class="btn primary">${icon("check")} เปลี่ยนรหัสผ่าน</button></form></div>`;
+    bindPwEyes(c);
+    $("[data-f]", c).onsubmit = e => { e.preventDefault(); const f = formData(c); if (f.newPassword !== f.confirm) return toast("ยืนยันรหัสผ่านไม่ตรงกัน", "bad");
+      withBtn($("button.primary", c), async () => { await api("POST", "/api/user/change-password", f, { token: tokenFor(S.bid) }); toast("เปลี่ยนรหัสผ่านแล้ว"); $("[data-f]", c).reset(); }).catch(() => {}); };
+    return;
+  }
   const adm = S.binfo.isAdmin;
   c.innerHTML = `<div class="card" style="max-width:480px"><div class="card-h"><h3>${icon("key", "").replace("<svg", '<svg style="width:18px;height:18px;vertical-align:-3px"')} เปลี่ยนรหัสผ่านของ ${esc(S.binfo.branch.name)}</h3></div><form class="card-b stack" data-f>
     ${adm ? `<div class="info-box">คุณเข้าในฐานะผู้ดูแล — ไม่ต้องใส่รหัสเดิม</div>` : `<label class="field"><span>รหัสผ่านเดิม</span>${pwInput("oldPassword", "", "current-password")}</label>`}
@@ -1018,7 +1517,8 @@ function adminNav() {
   const a = "#/admin/";
   return [{ key: "overview", label: "ภาพรวมทุกสาขา", icon: "dashboard", href: a + "overview" }, { sec: "จัดการ" }, { key: "branches", label: "จัดการสาขา", icon: "building", href: a + "branches" },
     { key: "lists", label: "หมวด & ช่องทาง", icon: "settings", href: a + "lists" }, { key: "settings", label: "ตั้งค่าบริษัท & ระบบ", icon: "shield", href: a + "settings" },
-    { key: "admins", label: "ผู้ดูแลระบบ", icon: "users", href: a + "admins" }, { sec: "ระบบ" }, { key: "activity", label: "ประวัติการใช้งาน", icon: "history", href: a + "activity" },
+    { key: "users", label: "ผู้ใช้งาน & สิทธิ์", icon: "userKey", href: a + "users" }, { key: "admins", label: "ผู้ดูแลระบบ", icon: "users", href: a + "admins" },
+    { sec: "ระบบ" }, { key: "activity", label: "Log การใช้งาน", icon: "history", href: a + "activity" },
     { key: "backup", label: "สำรองข้อมูล", icon: "database", href: a + "backup" }, { key: "account", label: "เปลี่ยนรหัสผ่านของฉัน", icon: "key", href: a + "account" }];
 }
 async function adminLogout(goHome) {
@@ -1092,11 +1592,12 @@ ADMIN_PAGES.branches = { title: "จัดการสาขา", async render(c
       <td><div class="row"><div class="branch-dot" style="width:34px;height:34px;font-size:12px;border-radius:9px;background:${esc(b.color)}">${esc(b.code || initials(b.name))}</div><div><div class="bold">${esc(b.name)}</div><div class="muted small">${esc(b.code)}${b.taxId ? " · เลขผู้เสียภาษี " + esc(b.taxId) : ""}</div></div></div></td>
       <td class="small">${esc(b.phone || "-")}<div class="muted desc" style="max-width:220px">${esc(b.address)}</div></td><td>${b.active ? `<span class="chip good">ใช้งาน</span>` : `<span class="chip">ปิดใช้งาน</span>`}</td>
       <td class="small">${thDateTime(b.lastLoginAt)}</td><td class="small">${thDateTime(b.passChangedAt)}</td>
-      <td style="white-space:nowrap"><button class="btn sm" data-open="${b.id}">เปิดบัญชี</button> <button class="btn sm" data-edit="${b.id}">${icon("edit")} แก้ไข</button> <button class="btn sm" data-pw="${b.id}">${icon("key")} ตั้งรหัสใหม่</button></td></tr>`).join("")}</tbody></table>`
+      <td style="white-space:nowrap"><button class="btn sm" data-open="${b.id}">เปิดบัญชี</button> <button class="btn sm" data-edit="${b.id}">${icon("edit")} แก้ไข</button> <button class="btn sm" data-pw="${b.id}">${icon("key")} ตั้งรหัสใหม่</button> <button class="btn sm" data-ci="${b.id}">${icon("pin")} เช็คอิน${b.checkin.enabled ? ` <span class="chip good plain" style="padding:0 6px">เปิด</span>` : ""}</button></td></tr>`).join("")}</tbody></table>`
     : emptyBox("ยังไม่มีสาขา — กด “สร้างสาขาใหม่”", "building");
   const find = id => br.find(b => b.id === id);
   $$("[data-open]", c).forEach(b => { b.onclick = () => openBranchAsAdmin(b.dataset.open); });
   $$("[data-edit]", c).forEach(b => { b.onclick = () => branchModal(find(b.dataset.edit), br, () => self.render(c)); });
+  $$("[data-ci]", c).forEach(b => { b.onclick = () => checkinConfigModal(find(b.dataset.ci), () => self.render(c)); });
   $$("[data-pw]", c).forEach(b => { b.onclick = () => { const x = find(b.dataset.pw);
     const m = openModal({ title: "ตั้งรหัสผ่านใหม่ · " + esc(x.name), body: `<div class="stack"><label class="field"><span>รหัสผ่านใหม่ของสาขา (อย่างน้อย 6 ตัว)</span>${pwInput("password", "", "new-password")}</label><label class="field"><span>ยืนยันรหัสผ่าน</span>${pwInput("confirm", "", "new-password")}</label><div class="warn-box">ทุกอุปกรณ์ที่เข้าสาขานี้อยู่จะถูกออกจากระบบทันที</div></div>`, foot: `<button class="btn" data-close>ยกเลิก</button><button class="btn primary" data-ok>บันทึกรหัสใหม่</button>` });
     bindPwEyes(m.el);
@@ -1104,6 +1605,26 @@ ADMIN_PAGES.branches = { title: "จัดการสาขา", async render(c
   const order = async (i, d) => { const ids = br.map(x => x.id); [ids[i], ids[i + d]] = [ids[i + d], ids[i]]; await api("POST", "/api/admin/branches/x/order", { ids }); self.render(c); };
   $$("[data-up]", c).forEach(b => { b.onclick = () => order(+b.dataset.up, -1); }); $$("[data-dn]", c).forEach(b => { b.onclick = () => order(+b.dataset.dn, 1); });
 } };
+function checkinConfigModal(b, after) {
+  const k = b.checkin; const link = location.origin + location.pathname + "#/checkin/" + b.id;
+  const m = openModal({ title: "ตั้งค่าเช็คอิน · " + esc(b.name), size: "lg", body: `<label class="check" style="margin-bottom:14px"><input type="checkbox" name="enabled" ${k.enabled ? "checked" : ""}> <b>เปิดระบบเช็คอินเข้า-ออกงานของสาขานี้</b></label>
+    <div class="section-t">พิกัดร้าน</div><div class="grid g3"><label class="field"><span>ละติจูด (Latitude)</span><input class="input num" name="lat" value="${k.lat == null ? "" : k.lat}" inputmode="decimal" placeholder="เช่น 18.788343"></label>
+      <label class="field"><span>ลองจิจูด (Longitude)</span><input class="input num" name="lng" value="${k.lng == null ? "" : k.lng}" inputmode="decimal" placeholder="เช่น 98.985300"></label>
+      <div class="field" style="align-self:end"><button type="button" class="btn" style="width:100%" data-here>${icon("pin")} ใช้ตำแหน่งปัจจุบัน</button></div></div>
+    <div class="field-hint" data-maplink style="margin-top:6px"></div><div class="field-hint">วิธีหาพิกัด: ยืนอยู่ที่ร้านแล้วกด “ใช้ตำแหน่งปัจจุบัน” หรือเปิด Google Maps → กดค้างที่ร้าน → คัดลอกตัวเลข 2 ชุด</div>
+    <div class="section-t" style="margin-top:16px">กติกา</div><div class="grid g3"><label class="field"><span>ระยะห่างสูงสุดจากร้าน (เมตร)</span><input class="input num" name="radius" value="${k.radius}" inputmode="numeric"><div class="field-hint">แนะนำ 50–200 ม. (GPS มือถือคลาดเคลื่อนได้ 10–50 ม.)</div></label>
+      <label class="field"><span>เวลาเข้างาน</span><input type="time" class="input" name="workStart" value="${esc(k.workStart)}"></label>
+      <label class="field"><span>ผ่อนผันก่อนนับว่าสาย (นาที)</span><input class="input num" name="lateGrace" value="${k.lateGrace}" inputmode="numeric"></label></div>
+    <div class="info-box" style="margin-top:16px">ลิงก์เช็คอินสำหรับพนักงาน (ส่งให้เปิดบนมือถือ หรือทำ QR ติดหน้าร้าน):<div style="margin-top:4px;word-break:break-all"><b>${esc(link)}</b></div><div class="small" style="margin-top:4px">พนักงานต้องมี PIN — ตั้งได้ที่เมนู “พนักงาน” ของสาขา</div></div>`,
+    foot: `<button class="btn" data-close>ยกเลิก</button><button class="btn" data-copy>${icon("copy")} คัดลอกลิงก์</button><button class="btn primary" data-ok>${icon("check")} บันทึก</button>` });
+  const ml = () => { const f = formData(m.el); $("[data-maplink]", m.el).innerHTML = f.lat && f.lng ? `<a href="https://www.google.com/maps?q=${encodeURIComponent(f.lat)},${encodeURIComponent(f.lng)}" target="_blank">${icon("pin", "").replace("<svg", '<svg style="width:12px;height:12px;vertical-align:-2px"')} ตรวจตำแหน่งบน Google Maps</a>` : ""; };
+  $$("[name=lat],[name=lng]", m.el).forEach(i => { i.oninput = ml; }); ml();
+  $("[data-copy]", m.el).onclick = () => { navigator.clipboard && navigator.clipboard.writeText(link).then(() => toast("คัดลอกลิงก์แล้ว")); };
+  const here = $("[data-here]", m.el); here.onclick = () => withBtn(here, () => new Promise((res, rej) => { if (!navigator.geolocation) return rej(new Error("เบราว์เซอร์นี้ไม่รองรับ GPS"));
+    navigator.geolocation.getCurrentPosition(p => { $("[name=lat]", m.el).value = p.coords.latitude.toFixed(6); $("[name=lng]", m.el).value = p.coords.longitude.toFixed(6); ml(); toast("ได้ตำแหน่งแล้ว (คลาดเคลื่อน ±" + Math.round(p.coords.accuracy) + " ม.)"); res(); },
+      e => rej(new Error(e.code === 1 ? "กรุณาอนุญาตให้เว็บนี้ใช้ตำแหน่ง" : "อ่านตำแหน่งไม่ได้")), { enableHighAccuracy: true, timeout: 15000 }); })).catch(() => {});
+  const ok = $("[data-ok]", m.el); ok.onclick = () => withBtn(ok, async () => { const f = formData(m.el); await api("PUT", "/api/admin/branches/" + b.id + "/checkin", f); m.close(); toast("บันทึกการตั้งค่าเช็คอินแล้ว"); after(); }).catch(() => {});
+}
 function branchModal(b, all, after) {
   const isNew = !b; b = b || { name: "", code: "", color: COLORS[all.length % COLORS.length], phone: "", taxId: "", address: "", active: true };
   const m = openModal({ title: isNew ? "สร้างสาขาใหม่" : "แก้ไขสาขา · " + esc(b.name), size: "lg", body: `<div class="grid g2">
@@ -1170,15 +1691,86 @@ ADMIN_PAGES.admins = { title: "ผู้ดูแลระบบ", async render(
   $$("[data-tog]", c).forEach(b => { b.onclick = async () => { const a = find(b.dataset.tog); try { await api("PUT", "/api/admin/admins/" + a.id, { active: !a.active }); self.render(c); } catch (e) { toast(e.message, "bad"); } }; });
   $$("[data-del]", c).forEach(b => { b.onclick = async () => { const a = find(b.dataset.del); if (!await confirmBox("ลบผู้ดูแล " + a.username + "?", { danger: true, okText: "ลบ" })) return; try { await api("DELETE", "/api/admin/admins/" + a.id); self.render(c); } catch (e) { toast(e.message, "bad"); } }; });
 } };
-ADMIN_PAGES.activity = { title: "ประวัติการใช้งาน", state: { bid: "" }, async render(c) {
+ADMIN_PAGES.activity = { title: "Log การใช้งาน", state: { bid: "", actor: "", kind: "" }, async render(c) {
   const st = this.state; const br = (await api("GET", "/api/admin/branches")).branches;
-  c.innerHTML = `<div class="page-head"><div class="grow"><h2>ประวัติการใช้งาน</h2><div class="muted small">ใครทำอะไร เมื่อไร ในสาขาไหน</div></div>${rangeBar()}<select class="input" style="width:200px" data-bid><option value="">ทุกสาขา + ระบบ</option>${br.map(b => opt(b.id, b.name, b.id === st.bid)).join("")}</select><button class="btn" data-csv>${icon("download")} CSV</button></div><div class="card"><div class="tbl-wrap" data-tbl><div class="boot" style="height:160px"><div class="spinner"></div></div></div></div>`;
+  c.innerHTML = `<div class="page-head"><div class="grow"><h2>Log การใช้งาน</h2><div class="muted small">ใคร · ทำอะไร · สาขาไหน · เมื่อไร · อย่างไร (IP / อุปกรณ์ / พิกัดตอนเช็คอิน) — รวมการใส่รหัสผิดและการพยายามเข้าสาขาหรือเมนูที่ไม่มีสิทธิ์</div></div>${rangeBar()}</div>
+    <div class="card"><div class="toolbar"><select class="input" style="width:200px" data-bid><option value="">ทุกสาขา + ระบบ</option>${opt("_system", "เฉพาะระบบ / Admin", st.bid === "_system")}${br.map(b => opt(b.id, b.name, b.id === st.bid)).join("")}</select>
+      <select class="input" style="width:230px" data-actor></select><select class="input" style="width:210px" data-kind>${opt("", "ทุกการกระทำ")}${opt("sec", "เฉพาะความปลอดภัย (รหัสผิด / ไม่มีสิทธิ์)", st.kind === "sec")}${opt("login", "เฉพาะการเข้าสู่ระบบ", st.kind === "login")}${opt("att", "เฉพาะเช็คอิน", st.kind === "att")}</select>
+      <div class="grow"></div><button class="btn sm" data-csv>${icon("download")} CSV</button></div><div class="tbl-wrap" data-tbl><div class="boot" style="height:160px"><div class="spinner"></div></div></div></div>`;
   bindRange(c, () => ADMIN_PAGES.activity.render(c));
   $("[data-bid]", c).onchange = e => { st.bid = e.target.value; ADMIN_PAGES.activity.render(c); };
-  const a = (await api("GET", "/api/admin/activity?limit=1000&" + rq() + (st.bid ? "&branchId=" + st.bid : ""))).activity;
-  $("[data-tbl]", c).innerHTML = a.length ? `<table class="tbl"><thead><tr><th>เวลา</th><th>ผู้ใช้</th><th>สาขา</th><th>รายละเอียด</th></tr></thead><tbody>${a.map(x => `<tr><td class="small" style="white-space:nowrap">${thDateTime(x.at)}</td><td><span class="chip ${x.kind === "admin" ? "blue" : ""} plain">${esc(x.actor)}</span></td><td class="small">${esc(x.branchName || "-")}</td><td>${esc(x.detail)}</td></tr>`).join("")}</tbody></table>` : emptyBox("ไม่มีประวัติในช่วงนี้", "history");
-  $("[data-csv]", c).onclick = () => downloadCSV("activity.csv", [["เวลา", "ผู้ใช้", "สาขา", "การกระทำ", "รายละเอียด"], ...a.map(x => [new Date(x.at).toLocaleString("th-TH"), x.actor, x.branchName, x.action, x.detail])]);
+  const a = (await api("GET", "/api/admin/activity?limit=5000&" + rq() + (st.bid ? "&branchId=" + st.bid : ""))).activity;
+  const actors = [...new Set(a.map(x => x.actor))].sort();
+  if (st.actor && !actors.includes(st.actor)) st.actor = "";
+  $("[data-actor]", c).innerHTML = opt("", "ผู้ใช้ทุกคน (" + actors.length + ")") + actors.map(x => opt(x, x, x === st.actor)).join("");
+  const filt = () => a.filter(x => (!st.actor || x.actor === st.actor) && (!st.kind || (st.kind === "sec" ? /fail|denied/.test(x.action) : st.kind === "login" ? /^login/.test(x.action) : /^check/.test(x.action))));
+  const draw = () => { $("[data-tbl]", c).innerHTML = activityTable(filt(), true); };
+  $("[data-actor]", c).onchange = e => { st.actor = e.target.value; draw(); };
+  $("[data-kind]", c).onchange = e => { st.kind = e.target.value; draw(); };
+  $("[data-csv]", c).onclick = () => activityCsv("log-" + S.range.from + "_" + S.range.to + ".csv", filt());
+  draw();
 } };
+const PERM_PRESETS = {
+  owner: ["ผู้จัดการ / เจ้าของ (ทุกเมนู + อนุมัติทั้งหมด)", m => Object.fromEntries(m.map(x => [x.key, "edit"])), { s: 1, l: 1, a: 1 }],
+  account: ["พนักงานบัญชี", () => ({ dashboard: "view", income: "edit", expense: "edit", invest: "edit", ledger: "view", accounts: "edit", statements: "view", stock: "view", settings: "view" }), {}],
+  stock: ["พนักงานร้าน (สต็อกอย่างเดียว)", () => ({ stock: "edit" }), {}],
+  lead: ["หัวหน้างาน (ลา/เบิก/ลงเวลา)", () => ({ stock: "edit", leave: "edit", advance: "edit", attendance: "edit", employees: "view" }), {}],
+  viewer: ["ดูอย่างเดียว (ทุกเมนู)", m => Object.fromEntries(m.map(x => [x.key, "view"])), {}]
+};
+ADMIN_PAGES.users = { title: "ผู้ใช้งาน & สิทธิ์", async render(c) {
+  const self = this;
+  const [{ users, menus }, { branches }] = await Promise.all([api("GET", "/api/admin/users"), api("GET", "/api/admin/branches")]);
+  const bname = id => (branches.find(b => b.id === id) || {}).name || "(สาขาถูกลบ)";
+  const permSummary = u => { const e = menus.filter(m => u.perms[m.key] === "edit").length, v = menus.filter(m => u.perms[m.key] === "view").length;
+    if (e === menus.length) return "ทุกเมนู (แก้ไขได้)"; const names = menus.filter(m => u.perms[m.key] !== "none").map(m => m.label + (u.perms[m.key] === "view" ? " (ดู)" : ""));
+    return names.length > 4 ? names.slice(0, 4).join(", ") + ` +${names.length - 4}` : names.join(", ") || "-"; };
+  c.innerHTML = `<div class="page-head"><div class="grow"><h2>ผู้ใช้งาน & สิทธิ์</h2><div class="muted small">สร้างบัญชีให้พนักงาน กำหนดสาขาที่เข้าได้ สิทธิ์แต่ละเมนู (ไม่เห็น / ดูอย่างเดียว / แก้ไขได้) และสิทธิ์อนุมัติ · ผู้ใช้ใหม่ต้องเปลี่ยนรหัสเมื่อเข้าครั้งแรก</div></div><button class="btn primary" data-new>${icon("plus")} เพิ่มผู้ใช้</button></div>
+    <div class="card"><div class="tbl-wrap">${users.length ? `<table class="tbl"><thead><tr><th>ผู้ใช้</th><th>สาขาที่เข้าได้</th><th>สิทธิ์เมนู</th><th>อนุมัติ</th><th>สถานะ</th><th>เข้าใช้ล่าสุด</th><th></th></tr></thead><tbody>${users.map(u => `<tr class="click" data-id="${u.id}" style="${u.active ? "" : "opacity:.55"}">
+      <td><div class="bold">${esc(u.name)}</div><div class="muted small">${esc(u.username)}</div></td><td class="small">${u.allBranches ? `<span class="chip blue plain">ทุกสาขา</span>` : u.branchIds.map(id => esc(bname(id))).join(", ")}</td>
+      <td class="small" style="max-width:300px">${esc(permSummary(u))}</td><td class="small">${[u.approveStock && "สต็อก", u.approveLeave && "การลา", u.approveAdvance && "เบิกเงิน"].filter(Boolean).map(x => `<span class="chip good plain">${x}</span>`).join(" ") || "-"}</td>
+      <td>${!u.active ? `<span class="chip">ปิดใช้งาน</span>` : u.mustChange ? `<span class="chip warn">รอเปลี่ยนรหัส</span>` : `<span class="chip good">ใช้งาน</span>`}</td><td class="small">${thDateTime(u.lastLoginAt)}</td><td>${icon("edit")}</td></tr>`).join("")}</tbody></table>`
+      : emptyBox("ยังไม่มีผู้ใช้ — กด “เพิ่มผู้ใช้” เพื่อสร้างบัญชีให้พนักงาน", "userKey")}</div></div>
+    <div class="info-box" style="margin-top:14px">รหัสผ่านสาขาเดิมยังใช้ได้ตามปกติ: ที่หน้าเข้าสาขา <b>เว้นชื่อผู้ใช้ว่าง</b> แล้วใส่รหัสสาขา = ผู้จัดการสาขา (สิทธิ์เต็มเฉพาะสาขานั้น)</div>`;
+  $("[data-new]", c).onclick = () => userModal(null, menus, branches, () => self.render(c));
+  $$("tr[data-id]", c).forEach(tr => { tr.onclick = () => userModal(users.find(u => u.id === tr.dataset.id), menus, branches, () => self.render(c)); });
+} };
+function userModal(u, menus, branches, after) {
+  const isNew = !u; u = u || { username: "", name: "", allBranches: false, branchIds: branches.length === 1 ? [branches[0].id] : [], perms: {}, approveStock: false, approveLeave: false, approveAdvance: false, note: "", active: true };
+  const perms = { ...u.perms };
+  const lv = [["none", "ไม่เห็น"], ["view", "ดูอย่างเดียว"], ["edit", "แก้ไขได้"]];
+  const m = openModal({ title: isNew ? "เพิ่มผู้ใช้งาน" : "แก้ไขผู้ใช้ · " + esc(u.username), size: "xl", sticky: true, body: `<div class="grid g3">
+      <label class="field"><span>ชื่อผู้ใช้ (ใช้เข้าระบบ) <em>*</em></span><input class="input" name="username" value="${esc(u.username)}" autocapitalize="off" ${isNew ? "" : "readonly"} placeholder="เช่น somchai"></label>
+      <label class="field"><span>ชื่อที่แสดง</span><input class="input" name="name" value="${esc(u.name)}" placeholder="เช่น สมชาย (ครัว)"></label>
+      ${isNew ? `<label class="field"><span>รหัสผ่านชั่วคราว (อย่างน้อย 6 ตัว) <em>*</em></span>${pwInput("password", "", "new-password")}</label>` : `<div class="field" style="align-self:end"><button type="button" class="btn" style="width:100%" data-reset>${icon("key")} รีเซ็ตรหัสผ่าน</button></div>`}</div>
+    <div class="section-t" style="margin-top:18px">ก) สาขาที่เข้าได้</div>
+    <label class="check"><input type="checkbox" name="allBranches" ${u.allBranches ? "checked" : ""}> ทุกสาขา (รวมสาขาที่สร้างใหม่ในอนาคต)</label>
+    <div class="row wrap" style="margin-top:8px" data-brs>${branches.map(b => `<label class="check chip-check"><input type="checkbox" data-br="${b.id}" ${u.branchIds.includes(b.id) ? "checked" : ""}> ${esc(b.name)}</label>`).join("")}</div>
+    <div class="section-t" style="margin-top:18px">ข) สิทธิ์แต่ละเมนู</div>
+    <div class="row wrap" style="margin-bottom:10px"><span class="muted small">ชุดสำเร็จรูป:</span>${Object.keys(PERM_PRESETS).map(k => `<button type="button" class="btn sm" data-preset="${k}">${PERM_PRESETS[k][0]}</button>`).join("")}</div>
+    <div class="perm-grid" data-perms></div>
+    <div class="section-t" style="margin-top:18px">ค) สิทธิ์อนุมัติ</div>
+    <div class="row wrap"><label class="check chip-check"><input type="checkbox" name="approveStock" ${u.approveStock ? "checked" : ""}> อนุมัติสต็อก (รับเข้า/เบิก/ของเสีย/ตรวจนับ)</label><label class="check chip-check"><input type="checkbox" name="approveLeave" ${u.approveLeave ? "checked" : ""}> อนุมัติการลา</label><label class="check chip-check"><input type="checkbox" name="approveAdvance" ${u.approveAdvance ? "checked" : ""}> อนุมัติเบิกเงิน (และเลือกบัญชีจ่าย)</label></div>
+    <div class="field-hint" style="margin-top:6px">คนที่ไม่มีสิทธิ์อนุมัติสต็อก เมื่อเพิ่ม/ลดสต็อก รายการจะ “รออนุมัติ” และยังไม่กระทบยอด · ผู้อนุมัติจะเห็นเมนู “รออนุมัติ” พร้อมตัวเลขแจ้งเตือน</div>
+    <label class="field" style="margin-top:14px"><span>หมายเหตุ</span><input class="input" name="note" value="${esc(u.note)}"></label>`,
+    foot: `${isNew ? "" : `<div class="left"><button class="btn danger" data-del>${icon("trash")} ลบ</button><button class="btn" data-tog>${u.active ? "ปิดใช้งาน" : "เปิดใช้งาน"}</button></div>`}<button class="btn" data-close>ยกเลิก</button><button class="btn primary" data-save>${icon("check")} บันทึก</button>` });
+  bindPwEyes(m.el);
+  const drawPerms = () => { $("[data-perms]", m.el).innerHTML = menus.map(x => `<div class="perm-row"><div class="grow">${esc(x.label)}</div><div class="seg">${lv.map(([k, l]) => `<button type="button" data-pk="${x.key}" data-pv="${k}" class="${(perms[x.key] || "none") === k ? "on " + k : ""}">${l}</button>`).join("")}</div></div>`).join("");
+    $$("[data-pk]", m.el).forEach(b => { b.onclick = () => { perms[b.dataset.pk] = b.dataset.pv; drawPerms(); }; }); };
+  drawPerms();
+  const allB = $("[name=allBranches]", m.el); const syncB = () => { $("[data-brs]", m.el).style.opacity = allB.checked ? ".45" : ""; $$("[data-br]", m.el).forEach(x => { x.disabled = allB.checked; }); }; allB.onchange = syncB; syncB();
+  $$("[data-preset]", m.el).forEach(b => { b.onclick = () => { const p = PERM_PRESETS[b.dataset.preset]; Object.keys(perms).forEach(k => delete perms[k]); Object.assign(perms, p[1](menus));
+    $("[name=approveStock]", m.el).checked = !!p[2].s; $("[name=approveLeave]", m.el).checked = !!p[2].l; $("[name=approveAdvance]", m.el).checked = !!p[2].a; drawPerms(); }; });
+  const sv = $("[data-save]", m.el);
+  sv.onclick = () => withBtn(sv, async () => { const f = formData(m.el);
+    const body = { username: f.username.trim(), name: f.name, password: f.password, allBranches: !!f.allBranches, branchIds: $$("[data-br]", m.el).filter(x => x.checked).map(x => x.dataset.br),
+      perms, approveStock: !!f.approveStock, approveLeave: !!f.approveLeave, approveAdvance: !!f.approveAdvance, note: f.note };
+    if (isNew) await api("POST", "/api/admin/users", body); else { delete body.password; await api("PUT", "/api/admin/users/" + u.id, body); }
+    toast(isNew ? "สร้างผู้ใช้ " + body.username + " แล้ว — แจ้งรหัสชั่วคราวให้พนักงาน" : "บันทึกแล้ว"); m.close(); after(); }).catch(() => {});
+  const rs = $("[data-reset]", m.el); if (rs) rs.onclick = () => { const x = openModal({ title: "รีเซ็ตรหัส · " + esc(u.username), body: `<label class="field"><span>รหัสผ่านชั่วคราวใหม่</span>${pwInput("password", "", "new-password")}</label><div class="field-hint">ผู้ใช้จะถูกออกจากระบบ และต้องเปลี่ยนรหัสเมื่อเข้าครั้งถัดไป</div>`, foot: `<button class="btn" data-close>ยกเลิก</button><button class="btn primary" data-ok>บันทึก</button>` });
+    bindPwEyes(x.el); const ok = $("[data-ok]", x.el); ok.onclick = () => withBtn(ok, async () => { await api("PUT", "/api/admin/users/" + u.id, { password: $("[name=password]", x.el).value }); x.close(); toast("รีเซ็ตรหัสแล้ว"); }).catch(() => {}); };
+  const tg = $("[data-tog]", m.el); if (tg) tg.onclick = async () => { await api("PUT", "/api/admin/users/" + u.id, { active: !u.active }); m.close(); toast("อัปเดตสถานะแล้ว"); after(); };
+  const dl = $("[data-del]", m.el); if (dl) dl.onclick = async () => { if (!await confirmBox("ลบผู้ใช้ " + u.username + "?\nประวัติใน Log ยังอยู่", { danger: true, okText: "ลบ" })) return; await api("DELETE", "/api/admin/users/" + u.id); m.close(); toast("ลบแล้ว"); after(); };
+}
 ADMIN_PAGES.backup = { title: "สำรองข้อมูล", async render(c) {
   c.innerHTML = `<div class="card" style="max-width:640px"><div class="card-h"><h3>สำรองข้อมูลทั้งระบบ</h3></div><div class="card-b stack"><p style="margin:0">ดาวน์โหลดข้อมูลทุกสาขา (เอกสารบัญชี สต็อก พนักงาน เงินเดือน การตั้งค่า) เป็นไฟล์ JSON เก็บไว้ในเครื่อง แนะนำให้ทำทุกสิ้นเดือน</p>
     <div class="info-box">Railway มีระบบ Backup ของฐานข้อมูล PostgreSQL ด้วย (แท็บ Backups ของตัวฐานข้อมูล) ใช้คู่กันจะปลอดภัยที่สุด</div>
@@ -1208,7 +1800,8 @@ async function render() {
     const inAdmin = parts[0] === "admin" || (parts[0] === "b" && S.adminToken && S.adminBranch === parts[1]);
     if (S.adminToken && !inAdmin) await adminLogout(false);
     if (parts[0] === "admin") await renderAdmin(parts[1] || "overview", parts.slice(2));
-    else if (parts[0] === "b" && parts[1]) await renderBranch(parts[1], parts[2] || "dashboard", parts.slice(3));
+    else if (parts[0] === "b" && parts[1]) await renderBranch(parts[1], parts[2] || "home", parts.slice(3));
+    else if (parts[0] === "checkin" && parts[1]) await renderCheckin(parts[1]);
     else { S.bid = null; S.binfo = null; await renderLanding(); }
     window.scrollTo(0, 0);
   } finally { rendering = false; if (pending) { pending = false; render(); } }
