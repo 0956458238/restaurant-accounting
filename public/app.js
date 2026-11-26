@@ -77,6 +77,7 @@ const IC = {
   approve: '<circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-6"/>',
   pin: '<path d="M12 22s7-6.2 7-12a7 7 0 1 0-14 0c0 5.8 7 12 7 12z"/><circle cx="12" cy="10" r="2.6"/>',
   userKey: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 10.5-5.1"/><circle cx="17.5" cy="16.5" r="2.5"/><path d="m19.3 18.3 2.2 2.2"/>',
+  info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.5"/>',
   copy: '<rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h8"/>',
   up: '<path d="m18 15-6-6-6 6"/>', down: '<path d="m6 9 6 6 6-6"/>', more: '<circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/>'
 };
@@ -407,9 +408,8 @@ BRANCH_PAGES.dashboard = { title: () => "ภาพรวม", async render(c) {
       <div class="card kpi"><div class="lbl"><i style="background:${t.net >= 0 ? "var(--good)" : "var(--bad)"}"></i>กำไร (ขาดทุน) สุทธิ</div><div class="val ${t.net < 0 ? "neg" : ""}">${baht(t.net)}</div><div class="sub"><span>อัตรากำไร ${t.margin}%</span>${t.invest ? `<span>· หลังหักงบลงทุน ${baht(t.afterInvest)}</span>` : ""}</div></div>
       <div class="card kpi"><div class="lbl"><i style="background:var(--invest)"></i>สินทรัพย์ / งบลงทุน</div><div class="val">${baht(t.invest)}</div><div class="sub"><span>มูลค่าสต็อกคงเหลือ ${baht(s.stock.value)}</span></div></div>
     </div>
-    ${s.accounts && s.accounts.length ? `<div class="card" style="margin-bottom:14px"><div class="card-h"><h3 class="grow">เงินคงเหลือในแต่ละบัญชี (ณ วันนี้)</h3><span class="bold num">${baht(s.accounts.reduce((a, x) => a + x.balance, 0))}</span><a class="btn sm" href="#/b/${S.bid}/accounts">ดูรายละเอียด</a></div>
-      <div class="card-b"><div class="acc-tiles">${s.accounts.map(a => `<a class="mini-kpi" href="#/b/${S.bid}/accounts" style="color:inherit"><div class="l">${esc(a.name)}</div><div class="v ${a.balance < 0 ? "neg" : ""}">${baht(a.balance)}</div>${a.openingBalance == null ? `<div class="small muted">ยังไม่ได้ตั้งยอดยกมา</div>` : ""}</a>`).join("")}</div></div></div>` : ""}
-    ${s.cardBills && s.cardBills.length ? `<div class="card" style="margin-bottom:14px;border-color:#f5c2bd"><div class="card-h"><h3 class="grow">${icon("wallet", "").replace("<svg", '<svg style="width:17px;height:17px;vertical-align:-3px"')} บิลบัตรเครดิตที่ต้องชำระ (ภายใน 7 วัน / เลยกำหนด)</h3><a class="btn sm primary" href="#/b/${S.bid}/cards">ไปชำระบิล</a></div>
+    ${moneyFlowCard(s)}
+    ${s.cardBills && s.cardBills.length ? `<div class="card" style="margin-bottom:14px;border-color:#f5c2bd"><div class="card-h"><h3 class="grow">${icon("wallet", "").replace("<svg", '<svg style="width:17px;height:17px;vertical-align:-3px"')} บัตรเครดิต / งวดผ่อน ที่ต้องชำระ (ภายใน 7 วัน / เลยกำหนด)</h3><a class="btn sm primary" href="#/b/${S.bid}/cards">ไปชำระบิล</a></div>
       <div class="card-b flush">${s.cardBills.map(b => `<div class="list-row"><div class="grow"><div class="bold">${esc(b.card)}</div><div class="muted small">${b.count} รายการ</div></div><span class="chip ${b.overdue ? "bad" : "warn"}">${b.overdue ? "เลยกำหนด" : "ครบ"} ${thDate(b.dueDate, true)}</span><b class="num">${baht(b.total)}</b></div>`).join("")}</div></div>` : ""}
     ${avgCard(s)}
     ${channelCard(s)}
@@ -438,6 +438,32 @@ BRANCH_PAGES.dashboard = { title: () => "ภาพรวม", async render(c) {
   $$("[data-open]", c).forEach(el => { el.onclick = () => openDoc(el.dataset.type, el.dataset.open, () => BRANCH_PAGES.dashboard.render(c)); });
 } };
 
+// เงินเข้า-ออกแต่ละบัญชี: ยอดต้นงวด + รับเข้า − จ่ายออก = คงเหลือ
+function moneyFlowCard(s) {
+  const A = (s.accounts || []).filter(a => a.count || a.openingBalance != null || a.endBalance);
+  if (!A.length) return "";
+  const sum = k => A.reduce((x, a) => x + (a[k] || 0), 0);
+  const maxFlow = Math.max(1, ...A.map(a => Math.max(a.periodIn, a.periodOut)));
+  const today_ = today(), endLbl = s.to === today_ ? "คงเหลือ ณ วันนี้" : s.to > today_ ? "คงเหลือ ณ " + thDate(s.to, true) + " (รวมรายการล่วงหน้า)" : "คงเหลือ ณ " + thDate(s.to, true);
+  const bar = (v, cls) => `<div class="mf-bar"><div class="${cls}" style="width:${Math.max(v ? 3 : 0, v / maxFlow * 100)}%"></div></div>`;
+  const tile = a => { const end = a.endBalance, start = r2(a.startBalance + a.periodOpening), net = r2(a.periodIn - a.periodOut);
+    return `<a class="mf-card ${/สด/.test(a.name) ? "cash" : "bank"}" href="#/b/${S.bid}/accounts">
+      <div class="mf-head"><div class="mf-ic">${icon(/สด/.test(a.name) ? "payroll" : "building")}</div><div class="grow"><div class="bold">${esc(a.name)}</div><div class="small muted">${a.openingBalance == null ? `<span style="color:var(--warn)">ยังไม่ได้ตั้งยอดยกมา</span>` : (a.countIn + a.countOut) + " รายการในช่วงนี้"}</div></div></div>
+      <div class="mf-line muted"><span>ยอดต้นงวด</span><b class="num">${fmt(start)}</b></div>
+      <div class="mf-line in"><span>${icon("income")} รับเข้า</span><b class="num">+${fmt(a.periodIn)}</b></div>${bar(a.periodIn, "in")}
+      ${a.inTransfer ? `<div class="mf-sub">รวมรับโอนจากบัญชีอื่น ${fmt(a.inTransfer)}</div>` : ""}
+      <div class="mf-line out"><span>${icon("expense")} จ่ายออก</span><b class="num">−${fmt(a.periodOut)}</b></div>${bar(a.periodOut, "out")}
+      ${a.outTransfer ? `<div class="mf-sub">รวมโอนไปบัญชีอื่น ${fmt(a.outTransfer)}</div>` : ""}
+      <div class="mf-net ${net < 0 ? "neg" : "pos"}">${net < 0 ? "▼ ใช้มากกว่ารับ" : "▲ รับมากกว่าใช้"} ${fmt(Math.abs(net))}</div>
+      <div class="mf-end ${end < 0 ? "negbg" : ""}"><span>${endLbl}</span><b class="num">${baht(end)}</b></div></a>`; };
+  return `<div class="card" style="margin-bottom:14px"><div class="card-h"><h3 class="grow">เงินเข้า-ออกแต่ละบัญชี</h3><span class="muted small">${thDate(s.from, true)} – ${thDate(s.to, true)}</span><a class="btn sm" href="#/b/${S.bid}/accounts">รายการเดินบัญชี</a></div>
+    <div class="card-b"><div class="mf-total"><div><div class="l">ยอดต้นงวด (ทุกบัญชี)</div><div class="v">${baht(sum("startBalance") + sum("periodOpening"))}</div></div><div class="op">+</div>
+      <div class="in"><div class="l">รับเข้า</div><div class="v">${baht(sum("periodIn"))}</div></div><div class="op">−</div>
+      <div class="out"><div class="l">จ่ายออก</div><div class="v">${baht(sum("periodOut"))}</div></div><div class="op">=</div>
+      <div class="end"><div class="l">${endLbl} (ทุกบัญชี)</div><div class="v">${baht(sum("endBalance"))}</div></div></div>
+    <div class="mf-grid">${A.map(tile).join("")}</div>
+    <div class="field-hint" style="margin-top:10px">นับตามวันที่เงินเข้า-ออกจริง (รายการที่ค้างจะนับตอนกดชำระ) · รายการบัตรเครดิต/ค้างชำระยังไม่ตัดเงินจนกว่าจะชำระ · โอนระหว่างบัญชีรวมอยู่ในรับเข้า/จ่ายออกของแต่ละบัญชี แต่ไม่กระทบยอดรวมทุกบัญชี</div></div></div>`;
+}
 // รายได้เฉลี่ย (แบบเดียวกับ POS)
 function avgCard(s) {
   const a = s.averages; if (!a) return "";
@@ -585,11 +611,17 @@ async function openDoc(type, id, onSaved) {
       <label class="field"><span data-chlbl></span><div class="row" style="gap:6px"><select class="input" name="paymentChannel" ${ro ? "disabled" : ""}></select>${ro ? "" : `<button type="button" class="btn icon" data-addch title="เพิ่มช่องทาง / บัญชีใหม่">${icon("plus")}</button>`}</div></label>
       <label class="field" data-duewrap><span>วันครบกำหนด${W.settle} <em>*</em></span><input type="date" class="input" name="dueDate" value="${esc(d.dueDate)}" ${ro ? "readonly" : ""}></label>
     </div>
-    ${!id && type !== "income" ? `<div class="card card-b inst-box hidden" data-inst style="margin-top:14px;background:var(--surface-2)"><div class="row wrap" style="gap:14px">
-      <div class="field"><span class="small" style="display:block;margin-bottom:5px;color:var(--text-2);font-weight:500">ชำระบัตรแบบ</span><div class="seg" data-instmode><button type="button" data-v="1" class="on">จ่ายเต็มจำนวน</button><button type="button" data-v="n">แบ่งจ่ายรายเดือน</button></div></div>
-      <label class="field hidden" data-instf><span>จำนวนเดือน</span><input class="input num" style="width:110px" name="months" inputmode="numeric" placeholder="เช่น 10"></label>
-      <label class="field hidden" data-instf><span>ดอกเบี้ย/ค่าธรรมเนียมรวม (ถ้ามี)</span><input class="input num" style="width:170px" name="interest" inputmode="decimal" placeholder="0 = ผ่อน 0%"></label>
-      <div class="grow small" data-instinfo style="align-self:center"></div></div></div>` : ""}
+    ${!id && type !== "income" ? `<div class="card card-b inst-box hidden" data-inst style="margin-top:14px">
+      <div class="row wrap" style="gap:10px;margin-bottom:4px"><b>${icon("wallet", "").replace("<svg", '<svg style="width:16px;height:16px;vertical-align:-3px"')} ชำระบัตรเครดิตแบบไหน?</b></div>
+      <div class="inst-choice" data-instmode><button type="button" data-v="1" class="on"><b>ชำระเต็มจำนวน</b><span>ลงค่าใช้จ่ายเต็มยอดในวันที่เอกสาร · จ่ายบัตรครั้งเดียว</span></button>
+        <button type="button" data-v="n"><b>ผ่อนชำระ</b><span>แบ่งเป็นงวดรายเดือน · ลงค่าใช้จ่ายเดือนละงวด</span></button></div>
+      <div class="hidden" data-instf style="margin-top:12px"><div class="grid g4">
+        <label class="field"><span>ผ่อนกี่งวด (เดือน) <em>*</em></span><input class="input num" name="months" inputmode="numeric" placeholder="เช่น 10"></label>
+        <label class="field"><span>จ่ายทุกวันที่ของเดือน <em>*</em></span><input class="input num" name="payDay" inputmode="numeric" placeholder="1-31"></label>
+        <label class="field"><span>เริ่มงวดแรกเดือน</span><input type="month" class="input" name="firstMonth"></label>
+        <label class="field"><span>ดอกเบี้ย/ค่าธรรมเนียมรวม</span><input class="input num" name="interest" inputmode="decimal" placeholder="0 = ผ่อน 0%"></label></div>
+        <div data-sched style="margin-top:12px"></div></div>
+      <div class="small muted" data-instinfo style="margin-top:8px"></div></div>` : ""}
     <label class="field" style="margin-top:14px"><span>คำอธิบาย (ไม่ใส่ก็ได้ ระบบใช้ชื่อรายการแทน)</span><input class="input" name="description" value="${esc(d.description)}" ${ro ? "readonly" : ""}></label>
     <div class="row" style="margin-top:18px"><div class="section-t grow" style="margin:0">รายการ</div>${ro ? "" : `<button type="button" class="btn sm ghost" data-addcat>${icon("plus")} เพิ่มหมวดใหม่</button>`}</div>
     <div class="tbl-wrap"><table class="doc-lines"><thead><tr><th>#</th><th>รายละเอียด</th><th style="width:190px">หมวด</th><th class="num">จำนวน</th><th>หน่วย</th><th class="num">ราคา/หน่วย</th><th class="num">จำนวนเงิน</th><th></th></tr></thead><tbody data-lines>${d.items.map(lineRow).join("")}</tbody></table></div>
@@ -615,17 +647,33 @@ async function openDoc(type, id, onSaved) {
   const el = m.el;
   const recalc = () => { if ($("[data-instinfo]", el)) setTimeout(() => { try { instInfo(); } catch (e) {} }); const t = calcDoc(d); $("[data-sub]", el).textContent = fmt(t.subtotal); $("[data-disc]", el).textContent = "-" + fmt(t.discount); $("[data-vat]", el).textContent = fmt(t.vat); $("[data-total]", el).textContent = baht(t.total);
     $$("tr[data-i]", el).forEach(tr => { const it = d.items[+tr.dataset.i]; $("[data-amt]", tr).textContent = fmt(num(it.qty) * num(it.price)); }); };
+  let fmTouched = false;
+  const firstMonthFor = (date, pd) => { const [y, mo, dd] = date.split("-").map(Number); const ld = new Date(Date.UTC(y, mo, 0)).getUTCDate();
+    if (dd < Math.min(pd, ld)) return date.slice(0, 7); const nm = mo === 12 ? (y + 1) + "-01" : y + "-" + String(mo + 1).padStart(2, "0"); return nm; };
+  const payDateOf = (ym, k, pd) => { let [y, mo] = ym.split("-").map(Number); mo += k; while (mo > 12) { mo -= 12; y++; } const ld = new Date(Date.UTC(y, mo, 0)).getUTCDate(); return y + "-" + String(mo).padStart(2, "0") + "-" + String(Math.min(pd, ld)).padStart(2, "0"); };
   const instInfo = () => {
     const box = $("[data-inst]", el); if (!box) return;
-    const cd = cardOf(d.paymentChannel); box.classList.toggle("hidden", !cd);
-    if (!cd) { d.months = 1; return; }
+    const credit = !d.unpaid && isCreditChannel(d.paymentChannel); box.classList.toggle("hidden", !credit);
+    if (!credit) { d.months = 1; return; }
+    const cd = cardOf(d.paymentChannel);
     const multi = d.months > 1 || d.months === "n";
     $$("[data-instmode] button", el).forEach(b => b.classList.toggle("on", (b.dataset.v === "n") === multi));
-    $$("[data-instf]", el).forEach(x => x.classList.toggle("hidden", !multi));
+    $("[data-instf]", el).classList.toggle("hidden", !multi);
     $("[data-duewrap]", el).style.visibility = multi ? "hidden" : "visible";
-    const t = calcDoc(d).total, n = Math.round(num($("[name=months]", el).value)), it = num($("[name=interest]", el).value);
-    const first = cardDueFor(d.date || today(), cd.cutDay, cd.dueDay);
-    $("[data-instinfo]", el).innerHTML = multi ? (n >= 2 ? `ผ่อนเดือนละ <b>${baht(Math.floor((t + it) / n * 100) / 100)}</b> × ${n} งวด · ลงค่าใช้จ่ายเดือนละงวด · งวดแรกครบ ${thDate(first)}` : "ใส่จำนวนเดือน (2-60)") : `ครบกำหนดชำระ ${thDate(first)} (ตามรอบบัตร)`;
+    if (!multi) { $("[data-instinfo]", el).innerHTML = `ลงค่าใช้จ่ายเต็มยอดวันที่ ${thDate(d.date || today())} · ครบกำหนดจ่ายบัตร ${d.dueDate ? thDate(d.dueDate) : "-"}${cd ? " (ตามรอบบัตร)" : ""}`; $("[data-sched]", el).innerHTML = ""; return; }
+    const pdIn = $("[name=payDay]", el), fmIn = $("[name=firstMonth]", el);
+    if (!pdIn.value) pdIn.value = cd ? cd.dueDay : Number((d.date || today()).slice(8, 10));
+    const pd = Math.round(num(pdIn.value)), n = Math.round(num($("[name=months]", el).value)), it = num($("[name=interest]", el).value);
+    if (!fmTouched && pd >= 1 && pd <= 31) fmIn.value = firstMonthFor(d.date || today(), pd);
+    const t = calcDoc(d).total;
+    if (!(n >= 2 && n <= 60) || !(pd >= 1 && pd <= 31) || !fmIn.value) { $("[data-sched]", el).innerHTML = `<div class="warn-box">ใส่จำนวนงวด (2-60) และวันที่จ่าย (1-31)</div>`; $("[data-instinfo]", el).innerHTML = ""; return; }
+    const per = Math.floor((t + it) / n * 100) / 100, last = Math.round((t + it - per * (n - 1)) * 100) / 100;
+    const rows = []; for (let k = 0; k < n; k++) rows.push({ k, date: payDateOf(fmIn.value, k, pd), amt: k === n - 1 ? last : per });
+    const show = n <= 6 ? rows : [...rows.slice(0, 3), null, ...rows.slice(-2)];
+    $("[data-sched]", el).innerHTML = `<div class="sched"><div class="sched-h"><span>ตารางผ่อน ${n} งวด · จ่ายทุกวันที่ ${pd}</span><b>เดือนละ ${baht(per)}</b></div>
+      ${show.map(r => r ? `<div class="sched-r"><span>งวดที่ ${r.k + 1}</span><span>${thDate(r.date)}</span><b class="num">${fmt(r.amt)}</b></div>` : `<div class="sched-r muted"><span>⋮</span><span>อีก ${n - 5} งวด</span><span></span></div>`).join("")}
+      <div class="sched-r total"><span>รวม</span><span></span><b class="num">${fmt(t + it)}</b></div></div>`;
+    $("[data-instinfo]", el).innerHTML = `${icon("info", "").replace("<svg", '<svg style="width:13px;height:13px;vertical-align:-2px"')} ค่าใช้จ่ายจะลงเดือนละงวดตามวันที่จ่ายในตารางนี้ — <b>ไม่</b>ลงเต็มจำนวนในวันที่คีย์ (${thDate(d.date || today())}) · แต่ละงวดจะขึ้นในบิลบัตรและแจ้งเตือนก่อนครบกำหนด 7 วัน`;
   };
   const dueToggle = () => {
     const show = d.unpaid || isCreditChannel(d.paymentChannel);
@@ -637,7 +685,8 @@ async function openDoc(type, id, onSaved) {
     instInfo();
   };
   $$("[data-instmode] button", el).forEach(b => { b.onclick = () => { d.months = b.dataset.v === "n" ? "n" : 1; dueToggle(); }; });
-  ["months", "interest"].forEach(n => { const i = $(`[name=${n}]`, el); if (i) i.oninput = instInfo; });
+  ["months", "interest", "payDay"].forEach(n => { const i = $(`[name=${n}]`, el); if (i) i.oninput = instInfo; });
+  if ($("[name=firstMonth]", el)) $("[name=firstMonth]", el).onchange = () => { fmTouched = true; instInfo(); };
   const drawChans = () => { chans = listNames("payment_channel"); $("[name=paymentChannel]", el).innerHTML = chanOpts(); };
   const bindLines = () => {
     $$("tr[data-i]", el).forEach(tr => {
@@ -663,7 +712,7 @@ async function openDoc(type, id, onSaved) {
     for (const f of Array.from(e.target.files)) { if (f.size > 20 * 1024 * 1024) { toast("ไฟล์ " + f.name + " ใหญ่เกินไป", "bad"); continue; } try { const x = await fileToB64(f); if (x.data.length * .75 > 8 * 1024 * 1024) { toast("ไฟล์ " + f.name + " ใหญ่เกิน 8MB", "bad"); continue; } pending.push(x); } catch (err) { toast(err.message, "bad"); } }
     e.target.value = ""; drawFiles();
   };
-  ["date", "party", "description", "dueDate", "note", "discountValue"].forEach(n => { const i = $(`[name=${n}]`, el); if (i) i.oninput = () => { d[n] = i.value; if (n === "discountValue") recalc(); if (n === "dueDate") dueToggle(); if (n === "date" && cardOf(d.paymentChannel)) dueToggle(); }; });
+  ["date", "party", "description", "dueDate", "note", "discountValue"].forEach(n => { const i = $(`[name=${n}]`, el); if (i) i.oninput = () => { d[n] = i.value; if (n === "discountValue") recalc(); if (n === "dueDate") dueToggle(); if (n === "date" && isCreditChannel(d.paymentChannel)) { fmTouched = false; dueToggle(); } }; });
   $("[name=paymentChannel]", el).onchange = e => { d.paymentChannel = e.target.value; dueToggle(); };
   $$("[data-paid] button", el).forEach(b => { b.onclick = () => { if (ro) return; d.unpaid = b.dataset.v === "unpaid"; if (d.unpaid && isCreditChannel(d.paymentChannel)) d.paymentChannel = ""; if (!d.unpaid && !isCreditChannel(d.paymentChannel)) d.dueDate = ""; drawChans(); dueToggle(); }; });
   const ach = $("[data-addch]", el); if (ach) ach.onclick = async () => { const n = await quickAddList("payment_channel"); if (n) { d.paymentChannel = n; drawChans(); dueToggle(); } };
@@ -677,11 +726,12 @@ async function openDoc(type, id, onSaved) {
     const needDue = d.unpaid || isCreditChannel(d.paymentChannel);
     const payload = { type, date: d.date, party: d.party, description: d.description, paymentChannel: d.paymentChannel, unpaid: d.unpaid, dueDate: needDue ? d.dueDate : "",
       items: d.items.map(i => ({ name: i.name, category: i.category, qty: num(i.qty, 0), unit: i.unit, price: num(i.price, 0), stockItemId: i.stockItemId || "" })), discountType: d.discountType, discountValue: num(d.discountValue), vatMode: d.vatMode, note: d.note };
-    if (!id && (d.months === "n" || d.months > 1) && cardOf(d.paymentChannel)) {
-      const months = Math.round(num($("[name=months]", el).value));
-      if (months < 2 || months > 60) throw new Error("จำนวนเดือนที่แบ่งจ่ายต้องอยู่ระหว่าง 2 - 60");
-      const r = await bapi("POST", "/card-plans", { ...payload, months, interest: num($("[name=interest]", el).value) });
-      toast(`บันทึกผ่อน ${months} งวดแล้ว · เดือนละ ${baht(r.perMonth)} · งวดแรกครบ ${thDate(r.firstDue)}`); m.close(); onSaved && onSaved(); return;
+    if (!id && !d.unpaid && (d.months === "n" || d.months > 1) && isCreditChannel(d.paymentChannel)) {
+      const months = Math.round(num($("[name=months]", el).value)), payDay = Math.round(num($("[name=payDay]", el).value));
+      if (months < 2 || months > 60) throw new Error("จำนวนงวดผ่อนต้องอยู่ระหว่าง 2 - 60");
+      if (payDay < 1 || payDay > 31) throw new Error("วันที่จ่ายต้องอยู่ระหว่าง 1 - 31");
+      const r = await bapi("POST", "/card-plans", { ...payload, months, payDay, firstMonth: $("[name=firstMonth]", el).value, interest: num($("[name=interest]", el).value) });
+      toast(`บันทึกผ่อน ${months} งวดแล้ว · เดือนละ ${baht(r.perMonth)} · งวดแรก ${thDate(r.firstDue)}`); m.close(); onSaved && onSaved(); return;
     }
     if (needDue && !d.dueDate) throw new Error("กรุณาระบุวันครบกำหนด" + W.settle);
     if (!needDue && !d.paymentChannel) throw new Error("กรุณาเลือก" + W.ch + " หรือกด “" + W.unpaid + "”");
@@ -1520,13 +1570,13 @@ BRANCH_PAGES.cards = { title: () => "บัตรเครดิต", state: { o
       <div class="bold num" style="font-size:17px">${baht(b.total)}</div><button class="btn sm" data-tg="${cd.id}|${b.dueDate}">รายการ</button>${ed ? `<button class="btn sm primary" data-pay="${cd.id}|${b.dueDate}">${icon("check")} ชำระบิล</button>` : ""}</div>
       <div class="bill-items ${self.state.open[cd.id + "|" + b.dueDate] ? "" : "hidden"}" data-items="${cd.id}|${b.dueDate}">${b.records.map(x => `<div class="list-row small" data-doc="${x.id}" data-type="${x.type}" style="cursor:pointer"><span class="muted" style="width:70px">${thDate(x.date, true)}</span><span class="doc">${esc(x.docNo)}</span><div class="grow desc">${esc(x.party ? x.party + " · " : "")}${esc(x.description)}</div>${x.installment ? `<span class="chip blue plain">งวด ${x.planSeq}/${x.planCount}</span>` : ""}<b class="num">${fmt(x.total)}</b></div>`).join("")}</div></div>`;
     cd.plans = cd.plans.filter(p => p.count > 0);
-    html += `<div class="card" style="margin-bottom:14px"><div class="card-h"><div class="acc-ic">${icon("wallet")}</div><div class="grow"><h3>${esc(cd.name)}</h3><div class="muted small">ตัดรอบทุกวันที่ ${cd.cutDay} · ครบกำหนดชำระวันที่ ${cd.dueDay}${cd.dueDay <= cd.cutDay ? " ของเดือนถัดไป" : ""}</div></div>
+    html += `<div class="card" style="margin-bottom:14px"><div class="card-h"><div class="acc-ic">${icon("wallet")}</div><div class="grow"><h3>${esc(cd.name)}</h3><div class="muted small">${cd.dueDay ? `ตัดรอบทุกวันที่ ${cd.cutDay} · ครบกำหนดชำระวันที่ ${cd.dueDay}${cd.dueDay <= cd.cutDay ? " ของเดือนถัดไป" : ""}` : `ยังไม่ได้ตั้งวันตัดรอบ (ไม่บังคับ — ตั้งได้ที่ หมวด & ช่องทาง)`}</div></div>
       <div style="text-align:right"><div class="muted small">ยอดค้างทั้งหมด</div><div class="bold num" style="font-size:18px">${baht(cd.outstanding)}</div>${cd.limit ? `<div class="small muted">วงเงิน ${baht(cd.limit)} · เหลือ ${baht(cd.available)}</div>` : ""}</div></div>
       ${cd.limit ? `<div style="padding:0 18px"><div class="hbar" style="grid-template-columns:1fr;padding:8px 0 0"><div class="tr"><div class="fl" style="width:${pct}%;background:${pct > 80 ? "var(--bad)" : "var(--primary)"}"></div></div></div></div>` : ""}
       <div class="card-b">${billsDue.length ? billsDue.map(billRow).join("") : `<div class="muted small" style="padding:4px 0 10px">${icon("check", "").replace("<svg", '<svg style="width:14px;height:14px;vertical-align:-2px"')} ไม่มีบิลที่ต้องชำระใน 7 วันนี้</div>`}
         ${billsLater.length ? `<div class="section-t" style="margin-top:12px">บิลถัดไป</div>${billsLater.slice(0, 3).map(billRow).join("")}${billsLater.length > 3 ? `<details><summary class="small" style="cursor:pointer;color:var(--primary);padding:6px 0">ดูบิลล่วงหน้าอีก ${billsLater.length - 3} เดือน</summary>${billsLater.slice(3).map(billRow).join("")}</details>` : ""}` : ""}
         ${cd.plans.length ? `<div class="section-t" style="margin-top:14px">แผนผ่อนชำระ</div><div class="tbl-wrap"><table class="tbl"><thead><tr><th>วันที่ซื้อ</th><th>รายการ</th><th class="num">ยอดรวม</th><th>ผ่อนแล้ว</th><th class="num">คงเหลือ</th><th>งวดถัดไป</th><th></th></tr></thead><tbody>
-          ${cd.plans.map(p => `<tr style="${p.status !== "active" ? "opacity:.6" : ""}"><td>${thDate(p.purchaseDate, true)}</td><td><div class="bold desc">${esc(p.description)}</div><div class="muted small">${esc(p.party)}${p.interest ? " · ดอกเบี้ย " + fmt(p.interest) : ""}</div></td><td class="num">${fmt(p.total + p.interest)}</td>
+          ${cd.plans.map(p => `<tr style="${p.status !== "active" ? "opacity:.6" : ""}"><td>${thDate(p.purchaseDate, true)}</td><td><div class="bold desc">${esc(p.description)}</div><div class="muted small">${esc(p.party)}${p.payDay ? " · จ่ายทุกวันที่ " + p.payDay : ""}${p.interest ? " · ดอกเบี้ย " + fmt(p.interest) : ""}</div></td><td class="num">${fmt(p.total + p.interest)}</td>
             <td><div class="small">${p.paid}/${p.count} งวด${p.status === "cancelled" ? " · ยกเลิก" : p.status === "closed" ? " · ปิดแผน" : ""}</div><div class="hbar" style="grid-template-columns:1fr;padding:2px 0"><div class="tr" style="width:90px"><div class="fl" style="width:${p.count ? p.paid / p.count * 100 : 0}%;background:var(--good)"></div></div></div></td>
             <td class="num bold">${fmt(p.remaining)}</td><td class="small">${p.nextDue ? thDate(p.nextDue, true) : "-"}</td><td>${ed && p.remaining > 0 && p.status === "active" ? `<button class="btn ghost sm" data-cancelplan="${p.id}" data-paid="${p.paid}">ยกเลิก</button>` : ""}</td></tr>`).join("")}</tbody></table></div>` : ""}
         ${cd.history.length ? `<details style="margin-top:12px"><summary class="section-t" style="cursor:pointer">ประวัติการชำระบิล (${cd.history.length})</summary>${cd.history.map(h => `<div class="list-row small"><div class="grow">${thDate(h.date)} · จ่ายจาก <b>${esc(h.channel)}</b> · ${h.count} รายการ<div class="muted">${esc(h.by)}${h.fee ? " · ดอกเบี้ย/ค่าธรรมเนียม " + fmt(h.fee) : ""}</div></div><b class="num">${fmt(h.total + h.fee)}</b>${ed ? `<button class="btn ghost sm" data-unpay="${h.batch}">ยกเลิกการชำระ</button>` : ""}</div>`).join("")}</details>` : ""}
