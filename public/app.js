@@ -78,6 +78,9 @@ const IC = {
   pin: '<path d="M12 22s7-6.2 7-12a7 7 0 1 0-14 0c0 5.8 7 12 7 12z"/><circle cx="12" cy="10" r="2.6"/>',
   userKey: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 10.5-5.1"/><circle cx="17.5" cy="16.5" r="2.5"/><path d="m19.3 18.3 2.2 2.2"/>',
   info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.5"/>',
+  image: '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.6"/><path d="m21 15-5-5L5 21"/>',
+  upload: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m17 8-5-5-5 5"/><path d="M12 3v12"/>',
+  external: '<path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>',
   copy: '<rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h8"/>',
   up: '<path d="m18 15-6-6-6 6"/>', down: '<path d="m6 9 6 6 6-6"/>', more: '<circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/>'
 };
@@ -188,6 +191,84 @@ function fileToB64(file, maxDim) {
   });
 }
 
+/* ===================== รูปภาพ: ลิงก์, ย่อรูป, กล่องรูปโปรไฟล์, หน้าต่างดูรูป (v2.6) ===================== */
+const authUrl = (p, bid) => { bid = bid || S.bid; return "/api/b/" + bid + p + (p.includes("?") ? "&" : "?") + "t=" + encodeURIComponent(tokenFor(bid) || ""); };
+function resizeToDataUrl(file, max, q) {
+  max = max || 512; q = q || .82;
+  return new Promise((res, rej) => {
+    if (!/^image\//.test(file.type) && !/\.(heic|heif|jpe?g|png|webp)$/i.test(file.name)) return rej(new Error("กรุณาเลือกไฟล์รูปภาพ"));
+    const rd = new FileReader(); rd.onerror = () => rej(new Error("อ่านไฟล์ไม่สำเร็จ"));
+    rd.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        let m = max, out = "";
+        for (let k = 0; k < 4; k++) {
+          const sc = Math.min(1, m / Math.max(img.width, img.height)); const c = document.createElement("canvas");
+          c.width = Math.max(1, Math.round(img.width * sc)); c.height = Math.max(1, Math.round(img.height * sc));
+          const g = c.getContext("2d"); g.fillStyle = "#fff"; g.fillRect(0, 0, c.width, c.height); g.drawImage(img, 0, 0, c.width, c.height);
+          out = c.toDataURL("image/jpeg", q); if (out.length < 380000) break; m = Math.round(m * .7);
+        }
+        res(out);
+      };
+      img.onerror = () => rej(new Error("เปิดรูปนี้ไม่ได้ ลองถ่ายใหม่หรือเลือกรูปอื่น"));
+      img.src = rd.result;
+    };
+    rd.readAsDataURL(file);
+  });
+}
+/* กล่องเลือกรูป: cur = url รูปเดิม (หรือ "") · คืนค่า get(): undefined = ไม่เปลี่ยน, "" = ลบรูป, dataURL = รูปใหม่ */
+const photoBox = (cur, label, round, max) => `<div class="photo-box ${round ? "round" : ""}" data-photobox data-max="${max || 512}">
+  <div class="ph" data-ph style="${cur ? `background-image:url('${cur}')` : ""}">${cur ? "" : icon("image", "")}</div>
+  <div class="col" style="gap:6px;min-width:0"><div class="bold" style="font-size:13px">${label || "รูปภาพ"}</div>
+    <div class="row" style="gap:6px;flex-wrap:wrap"><label class="btn sm">${icon("upload", "")} ${cur ? "เปลี่ยนรูป" : "เลือกรูป / ถ่ายรูป"}<input type="file" accept="image/*" data-phfile hidden></label>
+    <button type="button" class="btn sm ghost danger-t" data-phdel ${cur ? "" : "hidden"}>ลบรูป</button></div>
+    <div class="muted" style="font-size:11.5px">ระบบย่อรูปให้อัตโนมัติ</div></div></div>`;
+function bindPhotoBox(root) {
+  const box = $("[data-photobox]", root); if (!box) return () => undefined;
+  let val; const ph = $("[data-ph]", box), del = $("[data-phdel]", box);
+  $("[data-phfile]", box).onchange = async e => {
+    const f = e.target.files[0]; e.target.value = ""; if (!f) return;
+    try { val = await resizeToDataUrl(f, +box.dataset.max || 512); ph.style.backgroundImage = `url('${val}')`; ph.innerHTML = ""; del.hidden = false; }
+    catch (er) { toast(er.message, "bad"); }
+  };
+  del.onclick = () => { val = ""; ph.style.backgroundImage = ""; ph.innerHTML = icon("image", ""); del.hidden = true; };
+  ph.onclick = () => { const m = /url\(["']?(.*?)["']?\)/.exec(ph.style.backgroundImage); if (m) lightbox([{ url: m[1] }], 0); };
+  return () => val;
+}
+/* หน้าต่างดูรูปเต็มจอ — items = [{url, name, pdf}] */
+function lightbox(items, idx) {
+  items = items.filter(x => x && x.url); if (!items.length) return;
+  let i = Math.max(0, Math.min(idx || 0, items.length - 1));
+  const bg = document.createElement("div"); bg.className = "lightbox";
+  const draw = () => {
+    const it = items[i];
+    bg.innerHTML = `<div class="lb-top"><div class="lb-name">${esc(it.name || "")}${items.length > 1 ? ` <span class="muted">(${i + 1}/${items.length})</span>` : ""}</div>
+      <a class="lb-btn" href="${it.url}" target="_blank" rel="noopener" title="เปิดแท็บใหม่">${icon("external", "")}</a><button class="lb-btn" data-lbx aria-label="ปิด">${icon("x", "")}</button></div>
+      <div class="lb-stage">${items.length > 1 ? `<button class="lb-nav l" data-lbp aria-label="ก่อนหน้า">‹</button>` : ""}<img src="${it.url}" alt="">${items.length > 1 ? `<button class="lb-nav r" data-lbn aria-label="ถัดไป">›</button>` : ""}</div>`;
+    $("[data-lbx]", bg).onclick = close;
+    const p = $("[data-lbp]", bg), n = $("[data-lbn]", bg);
+    if (p) p.onclick = e => { e.stopPropagation(); i = (i - 1 + items.length) % items.length; draw(); };
+    if (n) n.onclick = e => { e.stopPropagation(); i = (i + 1) % items.length; draw(); };
+  };
+  const onKey = e => { if (e.key === "Escape") close(); else if (e.key === "ArrowLeft" && items.length > 1) { i = (i - 1 + items.length) % items.length; draw(); } else if (e.key === "ArrowRight" && items.length > 1) { i = (i + 1) % items.length; draw(); } };
+  function close() { bg.remove(); document.removeEventListener("keydown", onKey, true); }
+  bg.addEventListener("click", e => { if (e.target === bg || e.target.classList.contains("lb-stage")) close(); });
+  let sx = null; bg.addEventListener("touchstart", e => { sx = e.touches[0].clientX; }, { passive: true });
+  bg.addEventListener("touchend", e => { if (sx == null || items.length < 2) return; const dx = e.changedTouches[0].clientX - sx; sx = null; if (Math.abs(dx) > 50) { i = (i + (dx < 0 ? 1 : -1) + items.length) % items.length; draw(); } });
+  document.addEventListener("keydown", onKey, true);
+  draw(); document.body.appendChild(bg);
+}
+async function viewRecordImages(rid) {
+  try { const r = (await bapi("GET", "/records/" + rid)).record; const imgs = (r.files || []).filter(f => /^image/.test(f.mime));
+    if (!imgs.length) return toast("ไม่มีรูปแนบ", "bad"); lightbox(imgs.map(f => ({ url: authUrl("/files/" + f.id), name: f.filename })), 0);
+  } catch (e) { toast(e.message, "bad"); }
+}
+const stockPhoto = i => authUrl("/stock/items/" + i.id + "/photo?v=" + i.photoV);
+const empPhoto = e => authUrl("/employees/" + e.id + "/photo?v=" + e.photoV);
+const empAvatar = e => e.photoV ? `<span class="avatar" style="background-image:url('${empPhoto(e)}')"></span>` : `<span class="avatar ini">${esc(initials(e.nickname || e.name))}</span>`;
+/* จุดสีสาขา / โลโก้สาขา */
+const bdotH = (b, style) => b && b.logo ? `<div class="branch-dot logo" style="${style}"><img src="${esc(b.logo)}" alt=""></div>` : `<div class="branch-dot" style="${style}">${esc(b.code || initials(b.name))}</div>`;
+
 /* ===================== date range bar ===================== */
 const PRESETS = [["today", "วันนี้"], ["7d", "7 วัน"], ["month", "เดือนนี้"], ["lastmonth", "เดือนก่อน"], ["year", "ปีนี้"], ["custom", "กำหนดเอง"]];
 function setPreset(p) {
@@ -257,7 +338,7 @@ function shell({ kind, nav, active, title, crumb, headRight }) {
   const b = isBranch && S.binfo ? S.binfo.branch : null;
   const company = (S.binfo && S.binfo.company) || (S.info && S.info.company) || {};
   const head = isBranch
-    ? `<div class="sb-branch"><div class="branch-dot" style="background:${esc(b.color || "#1f6feb")}">${esc(b.code || initials(b.name))}</div><div class="grow"><div class="t">${esc(b.name)}</div><div class="s">ระบบบัญชีสาขา</div></div></div><div class="sb-company">${esc(company.name || "")}</div>`
+    ? `<div class="sb-branch">${bdotH(b, `background:${esc(b.color || "#1f6feb")}`)}<div class="grow"><div class="t">${esc(b.name)}</div><div class="s">ระบบบัญชีสาขา</div></div></div><div class="sb-company">${esc(company.name || "")}</div>`
     : `<div class="sb-branch"><div class="branch-dot" style="background:#18212f">${icon("shield")}</div><div class="grow"><div class="t">ผู้ดูแลระบบ</div><div class="s">${esc(S.admin ? S.admin.username : "")}</div></div></div><div class="sb-company">${esc(company.name || "")}</div>`;
   const navHtml = nav.map(n => n.sec ? `<div class="sb-sec">${n.sec}</div>` : `<a class="nav-item ${n.key === active ? "on" : ""}" href="${n.href}">${icon(n.icon)}<span>${n.label}</span>${n.badge ? `<span class="badge">${n.badge}</span>` : ""}</a>`).join("");
   const flag = isBranch && S.adminToken && S.adminBranch === S.bid ? `<div class="admin-flag">${icon("shield", "")}<span>คุณกำลังเปิดบัญชีสาขานี้ในฐานะผู้ดูแลระบบ</span><a href="#/admin/overview" data-backadmin>กลับหน้าผู้ดูแล →</a></div>` : "";
@@ -281,7 +362,7 @@ async function renderLanding() {
   try { S.info = await api("GET", "/api/public/info"); } catch (e) { app.innerHTML = `<div class="auth-wrap"><div class="auth-card"><div class="err-box">เชื่อมต่อเซิร์ฟเวอร์ไม่ได้: ${esc(e.message)}</div><button class="btn primary" onclick="location.reload()">ลองใหม่</button></div></div>`; return; }
   const c = S.info.company;
   document.title = c.name + " · ระบบบัญชี";
-  const cards = S.info.branches.map(b => `<button class="branch-card" data-b="${esc(b.id)}"><div class="branch-dot" style="background:${esc(b.color || "#1f6feb")}">${esc(b.code || initials(b.name))}</div>
+  const cards = S.info.branches.map(b => `<button class="branch-card" data-b="${esc(b.id)}">${bdotH(b, `background:${esc(b.color || "#1f6feb")}`)}
       <div><div class="bname">${esc(b.name)}</div><div class="bmeta">${S.branchTokens[b.id] ? `<span class="chip good">เข้าสู่ระบบอยู่</span>` : icon("lock", "") + " ต้องเข้าสู่ระบบ"}</div></div></button>`).join("");
   app.innerHTML = `<div class="landing"><div class="landing-inner">
     <div class="landing-head"><div class="brand"><div class="brand-logo">${c.logo ? `<img src="${esc(c.logo)}" alt="">` : esc(initials(c.name))}</div><div><div class="bold" style="font-size:16px">${esc(c.name)}</div><div class="muted small">ระบบบัญชีร้านอาหาร</div></div></div>
@@ -293,7 +374,7 @@ async function renderLanding() {
 }
 function branchLogin(b) {
   let lastUser = ""; try { lastUser = localStorage.getItem("lastUser") || ""; } catch (e) {}
-  const m = openModal({ title: "เข้าสู่ระบบสาขา", size: "", body: `<div class="row" style="margin-bottom:16px"><div class="branch-dot" style="background:${esc(b.color || "#1f6feb")}">${esc(b.code || initials(b.name))}</div><div><div class="bold">${esc(b.name)}</div><div class="muted small">ใส่ชื่อผู้ใช้และรหัสผ่านของคุณ</div></div></div>
+  const m = openModal({ title: "เข้าสู่ระบบสาขา", size: "", body: `<div class="row" style="margin-bottom:16px">${bdotH(b, `background:${esc(b.color || "#1f6feb")}`)}<div><div class="bold">${esc(b.name)}</div><div class="muted small">ใส่ชื่อผู้ใช้และรหัสผ่านของคุณ</div></div></div>
     <div data-err></div><form data-f class="stack"><label class="field"><span>ชื่อผู้ใช้ (User)</span><input class="input" name="username" value="${esc(lastUser)}" autocomplete="username" autocapitalize="off" placeholder="เว้นว่าง = ใช้รหัสสาขา (ผู้จัดการ)"></label>
     <label class="field"><span>รหัสผ่าน</span>${pwInput("password", "••••••")}</label>
     <div class="field-hint">ผู้จัดการสาขา: เว้นชื่อผู้ใช้ว่าง แล้วใส่ <b>รหัสผ่านสาขา</b> (สิทธิ์เต็ม)</div>
@@ -521,11 +602,12 @@ function docListPage(type) {
       $("[data-kpi]", c).innerHTML = `<div class="mini-kpi"><div class="l">ยอดรวม${T.th.split(" ")[0]}</div><div class="v" style="color:${T.color}">${baht(total)}</div></div><div class="mini-kpi"><div class="l">จำนวนเอกสาร</div><div class="v">${rows.length}</div></div>
         <div class="mini-kpi"><div class="l">${type === "income" ? "ค้างรับ" : "ค้างจ่าย"}</div><div class="v">${baht(unsettled.reduce((a, r) => a + r.total, 0))}</div></div><div class="mini-kpi"><div class="l">VAT ในช่วงนี้</div><div class="v">${baht(rows.reduce((a, r) => a + (r.vatMode !== "none" ? r.vat : 0), 0))}</div></div>`;
       $("[data-tbl]", c).innerHTML = rows.length ? `<table class="tbl"><thead><tr><th>วันที่</th><th>เลขที่เอกสาร</th><th>${T.party}</th><th>รายการ / หมวด</th><th>ช่องทาง</th><th>สถานะ</th><th class="num">ยอดสุทธิ</th></tr></thead><tbody>
-        ${rows.map(r => `<tr class="click" data-id="${r.id}"><td>${thDate(r.date, true)}</td><td><span class="doc">${esc(r.docNo)}</span>${r.fileCount ? ` <span class="muted" title="ไฟล์แนบ">${icon("clip", "").replace("<svg", '<svg style="width:13px;height:13px;vertical-align:-2px"')}</span>` : ""}</td>
+        ${rows.map(r => `<tr class="click" data-id="${r.id}"><td>${thDate(r.date, true)}</td><td>${r.thumbId ? `<div class="d-cell"><span class="rthumb" data-thumb="${r.id}" title="ดูรูปแนบ" style="background-image:url('${authUrl("/files/" + r.thumbId)}')">${r.fileCount > 1 ? `<b>${r.fileCount}</b>` : ""}</span><span class="doc">${esc(r.docNo)}</span></div>` : `<span class="doc">${esc(r.docNo)}</span>${r.fileCount ? ` <span class="muted" title="ไฟล์แนบ">${icon("clip", "").replace("<svg", '<svg style="width:13px;height:13px;vertical-align:-2px"')}</span>` : ""}`}</td>
           <td>${esc(r.party || "-")}</td><td><div class="desc">${esc(r.description)}</div><div class="muted small desc">${esc(r.category)}</div></td><td class="small">${esc(r.paymentChannel || "-")}</td>
           <td>${statusChip(r)}</td><td class="num bold">${baht(r.total)}</td></tr>`).join("")}</tbody>
         <tfoot><tr><td colspan="6">รวม ${rows.length} เอกสาร</td><td class="num">${baht(total)}</td></tr></tfoot></table>` : emptyBox(data.length ? "ไม่พบรายการที่ค้นหา" : `ยังไม่มี${T.th}ในช่วงนี้ — กด “${T.new}” เพื่อเริ่ม`, "file");
       $$("tr[data-id]", c).forEach(tr => { tr.onclick = () => openDoc(type, tr.dataset.id, () => self.render(c)); });
+      $$("[data-thumb]", c).forEach(t => { t.onclick = e => { e.stopPropagation(); viewRecordImages(t.dataset.thumb); }; });
       $("[data-csv]", c).onclick = () => downloadCSV(type + "-" + S.range.from + "_" + S.range.to + ".csv", [["วันที่", "เลขที่", T.party, "รายการ", "หมวด", "ช่องทาง", "ก่อนส่วนลด", "ส่วนลด", "VAT", "ยอดสุทธิ", "ครบกำหนด", "ชำระแล้ว", "หมายเหตุ"],
         ...rows.map(r => [r.date, r.docNo, r.party, r.description, r.category, r.paymentChannel, r.subtotal, r.discount, r.vat, r.total, r.dueDate, r.settledDate, r.note])]);
     };
@@ -574,13 +656,59 @@ function quickAddList(kind) {
     ok.onclick = submit; $("[name=name]", m.el).onkeydown = e => { if (e.key === "Enter") { e.preventDefault(); submit(); } };
   });
 }
+/* เลือกสินค้าสต็อกที่จะผูกกับบรรทัดรายจ่าย (v2.6) — คืนค่า item หรือ null */
+function openStockPicker(line) {
+  return new Promise(async res => {
+    try { await loadStockItems(); } catch (e) { toast(e.message, "bad"); return res(null); }
+    let done = false; const fin = v => { if (!done) { done = true; res(v); } };
+    const ph = i => i.photoV ? `<span class="sp-ph" style="background-image:url('${authUrl("/stock/items/" + i.id + "/photo?v=" + i.photoV)}')"></span>` : `<span class="sp-ph empty">${icon("stock", "")}</span>`;
+    const m = openModal({ title: "ผูกบรรทัดนี้กับสต็อก", size: "lg", body: `
+      <div class="info-box" style="margin-bottom:12px;line-height:1.6"><b>ผูกสต็อกคืออะไร?</b> ใช้ตอนซื้อวัตถุดิบ/ของเข้าร้าน เมื่อกด “บันทึก” รายจ่าย ระบบจะ <b>รับของเข้าสต็อกให้อัตโนมัติ</b>
+        ตามจำนวนในบรรทัด (ไม่ต้องไปกดรับเข้าซ้ำ และไม่ต้องรออนุมัติ) · ต้นทุนต่อหน่วย = ราคาในบรรทัดหลังหักส่วนลด · ถ้าแก้หรือลบเอกสาร สต็อกจะปรับตามให้เอง</div>
+      <div class="search" style="margin-bottom:10px;max-width:none">${icon("search", "")}<input class="input" data-spq placeholder="ค้นหาสินค้าในสต็อก" value="${esc(line.name || "")}"></div>
+      <div class="sp-list" data-splist></div>
+      ${canEdit("stock") ? `<div class="sp-new" data-spnew><div class="section-t" style="margin:14px 0 8px">ยังไม่มีในสต็อก? สร้างใหม่เลย</div>
+        <div class="grid g2"><label class="field"><span>ชื่อสินค้า <em>*</em></span><input class="input" data-nn value="${esc(line.name || "")}" placeholder="เช่น หมูสับ"></label>
+        <label class="field"><span>หน่วยนับ</span><input class="input" data-nu value="${esc(line.unit || "")}" list="unit-dl3" placeholder="เช่น กก."><datalist id="unit-dl3">${listNames("unit").map(n => opt(n)).join("")}</datalist></label></div>
+        <div class="field"><span style="display:block;font-size:13px;color:var(--text-2);margin-bottom:5px;font-weight:500">หมวดสต็อก</span>${catPicker(listNames("stock_category")[0] || "")}</div>
+        <button class="btn primary" data-nsave>${icon("plus")} สร้างสินค้าและผูกกับบรรทัดนี้</button></div>`
+        : `<div class="muted small" style="margin-top:12px">ไม่พบสินค้าที่ต้องการ? ให้ผู้ที่มีสิทธิ์จัดการสต็อกเพิ่มสินค้าก่อน</div>`}`,
+      foot: `<button class="btn" data-close>ยกเลิก</button>` });
+    const oc = m.close; m.close = () => { fin(null); oc(); };
+    $$("[data-close],[data-x]", m.el).forEach(b => { b.onclick = () => m.close(); });
+    const draw = () => {
+      const q = $("[data-spq]", m.el).value.trim().toLowerCase();
+      const all = S.stockItems.filter(i => i.active);
+      let list = q ? all.filter(i => (i.name + " " + (i.sku || "") + " " + (i.category || "")).toLowerCase().includes(q)) : all;
+      if (q && !list.length) list = all; // ไม่เจอ → แสดงทั้งหมดให้เลือก
+      $("[data-splist]", m.el).innerHTML = all.length ? list.slice(0, 80).map(i => `<button type="button" class="sp-item ${i.id === line.stockItemId ? "on" : ""}" data-sp="${i.id}">${ph(i)}
+        <span class="sp-t"><b>${esc(i.name)}</b><span class="muted small">${esc(i.category || "ไม่มีหมวด")} · เหลือ ${fmtQ(i.qty)} ${esc(i.unit)}${i.avgCost ? " · ทุนเฉลี่ย " + fmt(i.avgCost) : ""}</span></span><span class="sp-go">เลือก</span></button>`).join("")
+        + (q && !all.some(i => i.name.toLowerCase().includes(q)) ? `<div class="muted small" style="padding:6px 2px">ไม่พบ “${esc(q)}” — แสดงสินค้าทั้งหมด หรือสร้างใหม่ด้านล่าง</div>` : "")
+        : `<div class="muted" style="padding:10px 2px">ยังไม่มีสินค้าในสต็อกเลย</div>`;
+      $$("[data-sp]", m.el).forEach(b => { b.onclick = () => { fin(S.stockItems.find(x => x.id === b.dataset.sp)); oc(); }; });
+    };
+    $("[data-spq]", m.el).oninput = debounce(draw, 120); draw();
+    bindCatPicker(m.el);
+    const ns = $("[data-nsave]", m.el);
+    if (ns) ns.onclick = () => withBtn(ns, async () => {
+      const name = $("[data-nn]", m.el).value.trim(), unit = $("[data-nu]", m.el).value.trim(), category = $("[name=category]", m.el).value;
+      if (!name) throw new Error("กรุณาใส่ชื่อสินค้า");
+      if (category && !listNames("stock_category").includes(category)) { await bapi("POST", "/lists", { kind: "stock_category", name: category }); S.lists = (await bapi("GET", "/lists")).lists; }
+      const r = await bapi("POST", "/stock/items", { name, unit, category });
+      await loadStockItems(true); toast("สร้าง “" + name + "” ในสต็อกแล้ว");
+      fin(S.stockItems.find(x => x.id === r.id) || { id: r.id, name, unit }); oc();
+    }).catch(() => {});
+  });
+}
 // prefill = { form, replacePlanId } ใช้ตอน "แก้ไขแผนผ่อน": เปิดฟอร์มเดิม บันทึกแล้วแทนที่แผนเดิม
 async function openDoc(type, id, onSaved, prefill) {
   const T = TYPE[type];
   let d;
   if (id) { try { d = (await bapi("GET", "/records/" + id)).record; } catch (e) { return toast(e.message, "bad"); } }
   else d = { type, date: today(), party: "", description: "", paymentChannel: listNames("payment_channel")[0] || "", dueDate: "", items: [{ name: "", category: listNames(T.cat)[0] || "", qty: 1, unit: "", price: "" }], discountType: "baht", discountValue: 0, vatMode: "none", note: "", files: [] };
-  const pf = !id && prefill ? prefill.form : null;
+  const isCopy = !id && prefill && prefill.copy;
+  const pf = !id && prefill && !prefill.copy ? prefill.form : null;
+  if (isCopy) { const c = prefill.form; Object.assign(d, { party: c.party || "", description: c.description || "", note: c.note || "", paymentChannel: c.paymentChannel || d.paymentChannel, items: (c.items || []).length ? c.items.map(i => ({ name: i.name, category: i.category, qty: i.qty, unit: i.unit || "", price: i.price, stockItemId: i.stockItemId || "" })) : d.items, discountType: c.discountType || "baht", discountValue: c.discountValue || 0, vatMode: c.vatMode || "none" }); }
   if (pf) Object.assign(d, { date: pf.date, party: pf.party || "", description: pf.description || "", note: pf.note || "", paymentChannel: pf.paymentChannel, items: pf.items.length ? pf.items : d.items, discountType: pf.discountType || "baht", discountValue: pf.discountValue || 0, vatMode: pf.vatMode || "none" });
   d.items = d.items.map(i => ({ ...i }));
   const ro = ["payroll", "advance", "installment", "card_fee"].includes(d.source) || !canEdit(type);
@@ -594,9 +722,12 @@ async function openDoc(type, id, onSaved, prefill) {
     + chans.filter(n => !(d.unpaid && isCreditChannel(n))).map(n => opt(n, n + (isCreditChannel(n) ? " (เครดิต · มีวันครบกำหนด)" : ""), n === d.paymentChannel)).join("");
   const catOpts = sel => (cats.includes(sel) || !sel ? "" : opt(sel, sel + " (เดิม)", true)) + cats.map(n => opt(n, n, n === sel)).join("");
   const stockOpts = sel => `<option value="">— ไม่ผูกสต็อก —</option>` + (S.stockItems || []).filter(i => i.active || i.id === sel).map(i => opt(i.id, i.name + (i.unit ? " (" + i.unit + ")" : ""), i.id === sel)).join("");
+  const slChip = it => { const si = it.stockItemId && (S.stockItems || []).find(x => x.id === it.stockItemId);
+    if (it.stockItemId) return `<div class="sl-chip on"><button type="button" class="sl-main" data-slpick>${icon("stock", "")}<span><b>${esc(si ? si.name : "สินค้าในสต็อก")}</b> · รับเข้า ${fmtQ(num(it.qty))} ${esc(it.unit || (si && si.unit) || "")}${num(it.price) ? " @ " + fmt(num(it.price)) : ""}</span></button><button type="button" class="sl-x" data-slx title="เลิกผูกสต็อก">×</button></div>`;
+    return `<button type="button" class="sl-chip" data-slpick>${icon("stock", "")} ผูกสต็อก <span class="muted">(ของเข้าคลังอัตโนมัติ)</span></button>`; };
   const lineRow = (it, i) => `<tr data-i="${i}"><td class="ln">${i + 1}</td>
     <td class="c-name"><input class="input sm" data-f="name" value="${esc(it.name)}" placeholder="รายละเอียดสินค้า / บริการ" ${ro ? "readonly" : ""}>
-      ${type !== "income" && !ro ? `<div class="row" style="gap:6px;margin-top:5px"><span class="stock-link">${icon("stock", "").replace("<svg", '<svg style="width:13px;height:13px"')} ผูกสต็อก</span><select class="input sm" style="height:28px;font-size:12px;max-width:230px" data-f="stockItemId">${stockOpts(it.stockItemId)}</select></div>` : (it.stockItemId ? `<div class="stock-link">${icon("stock", "").replace("<svg", '<svg style="width:13px;height:13px"')} เข้าสต็อก</div>` : "")}</td>
+      ${type !== "income" && !ro ? `<div data-slwrap>${slChip(it)}</div>` : (it.stockItemId ? `<div class="stock-link">${icon("stock", "").replace("<svg", '<svg style="width:13px;height:13px"')} เข้าสต็อก${(() => { const si = (S.stockItems || []).find(x => x.id === it.stockItemId); return si ? ": " + esc(si.name) : ""; })()}</div>` : "")}</td>
     <td class="c-cat"><select class="input sm" data-f="category" ${ro ? "disabled" : ""}>${catOpts(it.category)}</select></td>
     <td style="width:86px"><input class="input sm num" data-f="qty" value="${esc(it.qty)}" inputmode="decimal" ${ro ? "readonly" : ""}></td>
     <td style="width:86px"><input class="input sm" data-f="unit" value="${esc(it.unit || "")}" list="units-dl" placeholder="หน่วย" ${ro ? "readonly" : ""}></td>
@@ -644,10 +775,11 @@ async function openDoc(type, id, onSaved, prefill) {
       <div class="sum-row muted small"><span>VAT</span><span class="num" data-vat></span></div>
       <div class="sum-row total"><span>ยอดสุทธิ</span><span class="num" data-total style="color:${T.color}"></span></div>
     </div></div>`;
-  const foot = `<div class="left">${id && !ro ? `<button class="btn danger" data-del>${icon("trash")} ลบ</button>` : ""}${id ? `<button class="btn" data-print>${icon("print")} พิมพ์</button>` : ""}</div>
+  const canCopy = id && canEdit(type) && !["payroll", "advance", "installment", "card_fee"].includes(d.source);
+  const foot = `<div class="left">${id && !ro ? `<button class="btn danger" data-del>${icon("trash")} ลบ</button>` : ""}${canCopy ? `<button class="btn" data-copydoc title="สร้างเอกสารใหม่จากรายการนี้">${icon("copy")} คัดลอก</button>` : ""}${id ? `<button class="btn" data-print>${icon("print")} พิมพ์</button>` : ""}</div>
     <button class="btn" data-close>${ro ? "ปิด" : "ยกเลิก"}</button>${ro ? "" : `<button class="btn primary" data-save>${icon("check")} บันทึก</button>`}`;
   const planBtns = id && d.source === "installment" && d.planId && canEdit("cards") ? `<button class="btn" data-planedit>${icon("edit")} แก้ไขแผนผ่อน</button><button class="btn danger" data-plancancel>${icon("trash")} ยกเลิกแผนผ่อน</button>` : "";
-  const m = openModal({ title: pf ? "แก้ไขแผนผ่อน · " + esc(pf.party || pf.description || "") : (id ? esc(d.docNo) + " · " : "") + (id ? T.doc : T.new), body, foot: planBtns ? foot.replace('<div class="left">', '<div class="left">' + planBtns) : foot, size: "xl", sticky: true });
+  const m = openModal({ title: pf ? "แก้ไขแผนผ่อน · " + esc(pf.party || pf.description || "") : isCopy ? T.new + ` <span class="chip" style="font-size:11.5px;vertical-align:2px">คัดลอกจาก ${esc(prefill.fromNo || "")}</span>` : (id ? esc(d.docNo) + " · " : "") + (id ? T.doc : T.new), body, foot: planBtns ? foot.replace('<div class="left">', '<div class="left">' + planBtns) : foot, size: "xl", sticky: true });
   const el = m.el;
   const pe = $("[data-planedit]", el); if (pe) pe.onclick = () => editPlan(d.planId, () => { m.close(); onSaved && onSaved(); }, () => m.close());
   const pc = $("[data-plancancel]", el); if (pc) pc.onclick = () => cancelPlan(d.planId, () => { m.close(); onSaved && onSaved(); });
@@ -703,13 +835,29 @@ async function openDoc(type, id, onSaved, prefill) {
   ["months", "interest", "payDay"].forEach(n => { const i = $(`[name=${n}]`, el); if (i) i.oninput = instInfo; });
   if ($("[name=firstMonth]", el)) $("[name=firstMonth]", el).onchange = () => { fmTouched = true; instInfo(); };
   const drawChans = () => { chans = listNames("payment_channel"); $("[name=paymentChannel]", el).innerHTML = chanOpts(); };
+  const bindSL = (tr, i) => {
+    const w = $("[data-slwrap]", tr); if (!w) return;
+    const redraw = () => { w.innerHTML = slChip(d.items[i]); bindSL(tr, i); };
+    const pk = $("[data-slpick]", w); if (pk) pk.onclick = async () => {
+      const r = await openStockPicker(d.items[i]); if (!r) return;
+      const it = d.items[i]; it.stockItemId = r.id;
+      if (!it.name) { it.name = r.name; $("[data-f=name]", tr).value = r.name; }
+      if (r.unit) { it.unit = r.unit; $("[data-f=unit]", tr).value = r.unit; }
+      if (!num(it.price) && r.avgCost) { it.price = r.avgCost; $("[data-f=price]", tr).value = r.avgCost; }
+      redraw(); recalc();
+    };
+    const x = $("[data-slx]", w); if (x) x.onclick = () => { d.items[i].stockItemId = ""; redraw(); };
+    tr._slRedraw = redraw;
+  };
   const bindLines = () => {
     $$("tr[data-i]", el).forEach(tr => {
       const i = +tr.dataset.i;
       $$("[data-f]", tr).forEach(inp => { const ev = inp.tagName === "SELECT" ? "onchange" : "oninput"; inp[ev] = () => {
         const f = inp.dataset.f; d.items[i][f] = inp.value;
+        if (["qty", "unit", "price"].includes(f) && d.items[i].stockItemId && tr._slRedraw) tr._slRedraw();
         if (f === "stockItemId" && inp.value) { const si = S.stockItems.find(x => x.id === inp.value); if (si) { if (!d.items[i].name) { d.items[i].name = si.name; $("[data-f=name]", tr).value = si.name; } if (si.unit) { d.items[i].unit = si.unit; $("[data-f=unit]", tr).value = si.unit; } if (!d.items[i].price && si.avgCost) { d.items[i].price = si.avgCost; $("[data-f=price]", tr).value = si.avgCost; } } }
         recalc(); }; });
+      bindSL(tr, i);
       const rm = $("[data-rm]", tr); if (rm) rm.onclick = () => { if (d.items.length === 1) { d.items[0] = { name: "", category: d.items[0].category, qty: 1, unit: "", price: "" }; } else d.items.splice(i, 1); redrawLines(); };
     });
   };
@@ -719,7 +867,10 @@ async function openDoc(type, id, onSaved, prefill) {
       .concat(pending.map((f, i) => `<div class="file-tile"><div class="th" style="${/^image/.test(f.mime) ? `background-image:url('${f.url}')` : ""}">${/^image/.test(f.mime) ? "" : icon("file")}</div><div class="fn">${esc(f.filename)}</div><button class="rm" data-rmp="${i}">×</button></div>`));
     $("[data-files]", el).innerHTML = tiles.join("") + (ro ? "" : `<div class="file-add" data-addfile>${icon("plus")}<div>แนบไฟล์</div></div>`) + (!tiles.length && ro ? `<span class="muted small">ไม่มีไฟล์แนบ</span>` : "");
     const af = $("[data-addfile]", el); if (af) af.onclick = () => $("[data-fileinput]", el).click();
-    $$("[data-view]", el).forEach(t => { t.onclick = () => window.open(`/api/b/${S.bid}/files/${t.dataset.view}?t=${tokenFor(S.bid)}`, "_blank"); });
+    $$("[data-view]", el).forEach(t => { t.onclick = () => {
+      const imgs = (d.files || []).filter(f => /^image/.test(f.mime)), f = (d.files || []).find(x => x.id === t.dataset.view);
+      if (f && /^image/.test(f.mime)) lightbox(imgs.map(x => ({ url: authUrl("/files/" + x.id), name: x.filename })), imgs.indexOf(f));
+      else window.open(authUrl("/files/" + t.dataset.view), "_blank"); }; });
     $$("[data-rmp]", el).forEach(b => { b.onclick = () => { pending.splice(+b.dataset.rmp, 1); drawFiles(); }; });
     $$("[data-rmf]", el).forEach(b => { b.onclick = async () => { if (!await confirmBox("ลบไฟล์แนบนี้?", { danger: true, okText: "ลบไฟล์" })) return; await bapi("DELETE", "/files/" + b.dataset.rmf); d.files = d.files.filter(f => f.id !== b.dataset.rmf); drawFiles(); }; });
   };
@@ -760,6 +911,7 @@ async function openDoc(type, id, onSaved, prefill) {
   if (del) del.onclick = async () => { if (!await confirmBox(`ลบเอกสาร ${d.docNo} ยอด ${baht(d.total)}?\nไฟล์แนบและรายการสต็อกที่ผูกไว้จะถูกลบด้วย`, { danger: true, okText: "ลบเอกสาร" })) return;
     try { await withBtn(del, () => bapi("DELETE", "/records/" + id)); } catch (e) { return; } S.stockItems = null; toast("ลบเอกสารแล้ว"); m.close(); onSaved && onSaved(); };
   const pr = $("[data-print]", el); if (pr) pr.onclick = () => printDoc(d);
+  const cp = $("[data-copydoc]", el); if (cp) cp.onclick = () => { m.close(); openDoc(type, null, onSaved, { copy: true, fromNo: d.docNo, form: d }); };
   const ds = $("[data-dosettle]", el); if (ds) ds.onclick = () => withBtn(ds, async () => { await bapi("POST", "/records/" + id + "/settle", { date: $("[data-settledate]", el).value, channel: $("[data-settlech]", el).value }); toast("บันทึกการชำระแล้ว"); m.close(); onSaved && onSaved(); }).catch(() => {});
   const us = $("[data-unsettle]", el); if (us) us.onclick = () => withBtn(us, async () => { await bapi("POST", "/records/" + id + "/settle", { undo: true }); toast("ยกเลิกสถานะชำระแล้ว"); m.close(); onSaved && onSaved(); }).catch(() => {});
 }
@@ -886,12 +1038,13 @@ const NOCAT = "ไม่ระบุหมวด";
 // ปุ่มรับเข้า/ของเสีย/ตรวจนับ/เพิ่มสินค้า แบบแถวเดียว (เลื่อนแนวนอนได้บนมือถือ)
 function stockActions() {
   if (!canEdit("stock")) return "";
-  return `<div class="stock-actions"><button class="btn sm" data-mv="in">${icon("income")} รับเข้า / เติม</button><button class="btn sm" data-mv="waste">${icon("trash")} ของเสีย</button><button class="btn sm" data-mv="count">${icon("check")} ตรวจนับ</button><button class="btn sm primary" data-newitem>${icon("plus")} เพิ่มสินค้า</button></div>
+  return `<div class="stock-actions"><button class="btn sm" data-mv="in">${icon("income")} รับเข้า / เติม</button><button class="btn sm" data-mv="waste">${icon("trash")} ของเสีย</button><button class="btn sm" data-mv="count">${icon("check")} ตรวจนับ</button>${S.adminToken ? `<button class="btn sm" data-copystock>${icon("copy")} คัดลอกไปสาขาอื่น</button>` : ""}<button class="btn sm primary" data-newitem>${icon("plus")} เพิ่มสินค้า</button></div>
     ${approver("stock") && S.pending && S.pending.stock ? `<div class="info-box row" style="margin-bottom:12px"><span class="grow">มีรายการสต็อกรออนุมัติ <b>${S.pending.stock}</b> รายการ</span><a class="btn sm primary" href="#/b/${S.bid}/approvals">ไปอนุมัติ</a></div>`
       : !approver("stock") ? `<div class="field-hint" style="margin:-4px 2px 12px">${icon("info", "").replace("<svg", '<svg style="width:13px;height:13px;vertical-align:-2px"')} เบิกใช้ = ตัดสต็อกทันที · รับเข้า/เติม · ของเสีย · ตรวจนับ = รอผู้จัดการอนุมัติ</div>` : ""}`;
 }
 function bindStockActions(root, after) {
   const n = $("[data-newitem]", root); if (n) n.onclick = () => stockItemModal(null, after);
+  const cs = $("[data-copystock]", root); if (cs) cs.onclick = () => copyStockModal(S.bid, after);
   $$("[data-mv]", root).forEach(b => { b.onclick = () => stockMoveModal(b.dataset.mv, null, after); });
 }
 const stockCats = items => { const order = listNames("stock_category"); const used = new Set(items.map(i => i.category || NOCAT));
@@ -927,7 +1080,7 @@ async function stockQuick(c, st, self) {
     const groups = stockCats(show).map(n => ({ n, list: show.filter(i => (i.category || NOCAT) === n) }));
     $("[data-groups]", body).innerHTML = show.length ? groups.map(g => `<div class="q-group"><div class="q-gh">${esc(g.n)} <span>${g.list.length}</span></div><div class="q-grid">${g.list.map(i => { const inC = st.cart[i.id] != null;
       const cls = i.qty <= 0 ? "out" : i.low ? "low" : "";
-      return `<div class="q-item ${cls} ${inC ? "sel" : ""}" data-qi="${i.id}"><div class="q-name">${esc(i.name)}</div><div class="q-left">เหลือ <b>${fmtQ(i.qty)}</b> ${esc(i.unit)}${i.qty <= 0 ? " · หมด" : i.low ? " · ใกล้หมด" : ""}</div>${i.pending ? `<div class="q-pend">รออนุมัติ ${i.pending}</div>` : ""}
+      return `<div class="q-item ${cls} ${inC ? "sel" : ""}" data-qi="${i.id}">${i.photoV ? `<div class="q-head"><span class="q-ph" style="background-image:url('${stockPhoto(i)}')"></span><div class="q-name">${esc(i.name)}</div></div>` : `<div class="q-name">${esc(i.name)}</div>`}<div class="q-left">เหลือ <b>${fmtQ(i.qty)}</b> ${esc(i.unit)}${i.qty <= 0 ? " · หมด" : i.low ? " · ใกล้หมด" : ""}</div>${i.pending ? `<div class="q-pend">รออนุมัติ ${i.pending}</div>` : ""}
         ${inC ? `<div class="q-step" data-step><button type="button" data-dec>−</button><input inputmode="decimal" value="${st.cart[i.id]}" data-qin><button type="button" data-inc>+</button></div>` : ed ? `<div class="q-tap">แตะเพื่อเบิก</div>` : ""}</div>`; }).join("")}</div></div>`).join("")
       : emptyBox(act.length ? "ไม่พบสินค้า" : "ยังไม่มีสินค้า — " + (ed ? "กด “เพิ่มสินค้า” ด้านบน" : "ให้ผู้จัดการเพิ่มสินค้า"), "stock");
     if (!ed) return;
@@ -1043,7 +1196,7 @@ BRANCH_PAGES.stock = { title: () => "สต็อกสินค้า", state: 
     const draw = () => {
       const q = st.q.toLowerCase(); const rows = items.filter(i => (!q || (i.name + " " + i.sku).toLowerCase().includes(q)) && (!st.cat || i.category === st.cat) && (!st.low || (i.low && i.active)));
       $("[data-tbl]", c).innerHTML = rows.length ? `<table class="tbl"><thead><tr><th>สินค้า</th><th>หมวด</th><th class="num">คงเหลือ</th><th class="num">จุดสั่งซื้อ</th><th class="num">ต้นทุนเฉลี่ย/หน่วย</th><th class="num">มูลค่า</th><th>สถานะ</th></tr></thead><tbody>
-        ${rows.map(i => `<tr class="click" data-id="${i.id}" style="${i.active ? "" : "opacity:.55"}"><td><div class="bold">${esc(i.name)}</div>${i.sku ? `<div class="muted small">${esc(i.sku)}</div>` : ""}</td><td class="small">${esc(i.category || "-")}</td>
+        ${rows.map(i => `<tr class="click" data-id="${i.id}" style="${i.active ? "" : "opacity:.55"}"><td><div class="d-cell">${i.photoV ? `<span class="rthumb" style="background-image:url('${stockPhoto(i)}')"></span>` : ""}<div><div class="bold">${esc(i.name)}</div>${i.sku ? `<div class="muted small">${esc(i.sku)}</div>` : ""}</div></div></td><td class="small">${esc(i.category || "-")}</td>
           <td class="num bold">${fmtQ(i.qty)} <span class="muted small">${esc(i.unit)}</span></td><td class="num muted">${i.minQty ? fmtQ(i.minQty) : "-"}</td><td class="num">${fmt(i.avgCost)}</td><td class="num">${fmt(i.value)}</td>
           <td>${!i.active ? `<span class="chip">ปิดใช้งาน</span>` : i.qty <= 0 ? `<span class="chip bad">หมด</span>` : i.low ? `<span class="chip warn">ใกล้หมด</span>` : `<span class="chip good">ปกติ</span>`}${i.pending ? ` <span class="chip warn plain">รออนุมัติ ${i.pending}</span>` : ""}</td></tr>`).join("")}</tbody>
         <tfoot><tr><td colspan="5">รวม ${rows.length} รายการ</td><td class="num">${fmt(rows.reduce((a, i) => a + i.value, 0))}</td><td></td></tr></tfoot></table>` : emptyBox(items.length ? "ไม่พบสินค้า" : "ยังไม่มีสินค้า — กด “เพิ่มสินค้า” เพื่อเริ่มต้น", "stock");
@@ -1109,13 +1262,14 @@ function stockItemModal(item, after) {
     <div class="field" style="grid-column:1/-1"><span style="display:block;font-size:13px;color:var(--text-2);margin-bottom:5px;font-weight:500">หมวดสต็อก (แตะเลือก หรือพิมพ์หมวดใหม่)</span>${catPicker(item.category)}</div>
     <label class="field"><span>หน่วยนับ</span><input class="input" name="unit" value="${esc(item.unit)}" list="unit-dl2" placeholder="เช่น กก."><datalist id="unit-dl2">${listNames("unit").map(n => opt(n)).join("")}</datalist></label>
     <label class="field"><span>จุดสั่งซื้อ (แจ้งเตือนเมื่อเหลือไม่เกิน)</span><input class="input num" name="minQty" value="${esc(item.minQty || "")}" inputmode="decimal" placeholder="0 = ไม่แจ้งเตือน"></label>
-    <label class="field"><span>หมายเหตุ</span><input class="input" name="note" value="${esc(item.note)}"></label></div>
+    <label class="field"><span>หมายเหตุ</span><input class="input" name="note" value="${esc(item.note)}"></label>
+    <div style="grid-column:1/-1">${photoBox(item.photoV ? stockPhoto(item) : "", "รูปสินค้า (ช่วยให้พนักงานเบิกถูก)")}</div></div>
     ${isNew ? `<div class="section-t" style="margin-top:18px">ยอดยกมา (ไม่บังคับ)</div><div class="grid g3"><label class="field"><span>จำนวนคงเหลือตอนนี้</span><input class="input num" name="openingQty" inputmode="decimal" placeholder="0"></label>
       <label class="field"><span>ต้นทุนต่อหน่วย (บาท)</span><input class="input num" name="openingCost" inputmode="decimal" placeholder="0.00"></label><label class="field"><span>ณ วันที่</span><input type="date" class="input" name="openingDate" value="${today()}"></label></div>` : ""}`,
     foot: `<button class="btn" data-close>ยกเลิก</button><button class="btn primary" data-save>${icon("check")} บันทึก</button>` });
-  bindCatPicker(m.el);
+  bindCatPicker(m.el); const getPhoto = bindPhotoBox(m.el);
   const sv = $("[data-save]", m.el);
-  sv.onclick = () => withBtn(sv, async () => { const f = formData(m.el); f.minQty = num(f.minQty); f.openingQty = num(f.openingQty); f.openingCost = num(f.openingCost);
+  sv.onclick = () => withBtn(sv, async () => { const f = formData(m.el); const pv = getPhoto(); if (pv !== undefined) f.photo = pv; f.minQty = num(f.minQty); f.openingQty = num(f.openingQty); f.openingCost = num(f.openingCost);
     if (f.category && !listNames("stock_category").includes(f.category)) { await bapi("POST", "/lists", { kind: "stock_category", name: f.category }); S.lists = (await bapi("GET", "/lists")).lists; }
     const r = isNew ? await bapi("POST", "/stock/items", f) : await bapi("PUT", "/stock/items/" + item.id, f);
     S.stockItems = null; toast(r.pending ? "บันทึกสินค้าแล้ว · ยอดยกมารออนุมัติ" : "บันทึกสินค้าแล้ว"); m.close(); after(); }).catch(() => {});
@@ -1123,14 +1277,16 @@ function stockItemModal(item, after) {
 async function stockItemDetail(id, after) {
   const it = (S.stockItems || await loadStockItems()).find(x => x.id === id); if (!it) return;
   const mv = (await bapi("GET", "/stock/moves?from=2000-01-01&to=2100-12-31&itemId=" + id)).moves;
-  const m = openModal({ title: esc(it.name), size: "xl", body: `<div class="pay-grid" style="margin-bottom:16px"><div class="mini-kpi"><div class="l">คงเหลือ</div><div class="v">${fmtQ(it.qty)} ${esc(it.unit)}</div></div><div class="mini-kpi"><div class="l">ต้นทุนเฉลี่ย/หน่วย</div><div class="v">${baht(it.avgCost)}</div></div>
+  const m = openModal({ title: esc(it.name), size: "xl", body: `${it.photoV ? `<div class="detail-ph" data-dph style="background-image:url('${stockPhoto(it)}')"></div>` : ""}<div class="pay-grid" style="margin-bottom:16px"><div class="mini-kpi"><div class="l">คงเหลือ</div><div class="v">${fmtQ(it.qty)} ${esc(it.unit)}</div></div><div class="mini-kpi"><div class="l">ต้นทุนเฉลี่ย/หน่วย</div><div class="v">${baht(it.avgCost)}</div></div>
       <div class="mini-kpi"><div class="l">มูลค่าคงเหลือ</div><div class="v">${baht(it.value)}</div></div><div class="mini-kpi"><div class="l">จุดสั่งซื้อ</div><div class="v">${it.minQty ? fmtQ(it.minQty) + " " + esc(it.unit) : "-"}</div></div></div>
     <div class="section-t">บัตรสต็อก (Stock Card)</div><div class="card tbl-wrap" data-mv>${movesTable(mv, false)}</div>`,
-    foot: canEdit("stock") ? `<div class="left"><button class="btn danger" data-del>${icon("trash")} ลบสินค้า</button><button class="btn" data-act>${it.active ? "ปิดใช้งาน" : "เปิดใช้งาน"}</button></div><button class="btn" data-in>${icon("income")} รับเข้า</button><button class="btn" data-out>${icon("expense")} เบิกใช้</button><button class="btn primary" data-edit>${icon("edit")} แก้ไข</button>` : `<button class="btn" data-close>ปิด</button>` });
+    foot: canEdit("stock") ? `<div class="left"><button class="btn danger" data-del>${icon("trash")} ลบสินค้า</button><button class="btn" data-act>${it.active ? "ปิดใช้งาน" : "เปิดใช้งาน"}</button>${S.adminToken ? `<button class="btn" data-cpy>${icon("copy")} คัดลอกไปสาขาอื่น</button>` : ""}</div><button class="btn" data-in>${icon("income")} รับเข้า</button><button class="btn" data-out>${icon("expense")} เบิกใช้</button><button class="btn primary" data-edit>${icon("edit")} แก้ไข</button>` : `<button class="btn" data-close>ปิด</button>` });
   const done = () => { m.close(); after(); };
+  const dph = $("[data-dph]", m.el); if (dph) dph.onclick = () => lightbox([{ url: stockPhoto(it), name: it.name }], 0);
   bindMoveDeletes(m.el, done);
   if (!canEdit("stock")) return;
   $("[data-edit]", m.el).onclick = () => { m.close(); stockItemModal(it, after); };
+  const cpy = $("[data-cpy]", m.el); if (cpy) cpy.onclick = () => { m.close(); copyStockModal(S.bid, after, [id]); };
   $("[data-in]", m.el).onclick = () => { m.close(); stockMoveModal("in", id, after); };
   $("[data-out]", m.el).onclick = () => { m.close(); stockMoveModal("out", id, after); };
   $("[data-act]", m.el).onclick = async () => { await bapi("PUT", "/stock/items/" + id, { active: !it.active }); S.stockItems = null; toast(it.active ? "ปิดใช้งานแล้ว" : "เปิดใช้งานแล้ว"); done(); };
@@ -1176,15 +1332,42 @@ BRANCH_PAGES.employees = { title: () => "พนักงาน", async render(c)
   if ($("[data-new]", c)) $("[data-new]", c).onclick = () => empModal(null, () => self.render(c));
   const emps = S.emps = (await bapi("GET", "/employees")).employees;
   $("[data-tbl]", c).innerHTML = emps.length ? `<table class="tbl"><thead><tr><th>รหัส</th><th>ชื่อ-สกุล</th><th>ตำแหน่ง</th><th>รูปแบบค่าจ้าง</th><th class="num">อัตรา</th><th>ประกันสังคม</th><th>บัญชีรับเงิน</th><th>PIN เช็คอิน</th><th>สถานะ</th></tr></thead><tbody>
-    ${emps.map(e => `<tr class="click" data-id="${e.id}" style="${e.active ? "" : "opacity:.55"}"><td class="muted">${esc(e.code)}</td><td><div class="bold">${esc(e.name)}${e.nickname ? ` <span class="muted">(${esc(e.nickname)})</span>` : ""}</div><div class="muted small">${e.startDate ? "เริ่มงาน " + thDate(e.startDate, true) : ""}</div></td>
+    ${emps.map(e => `<tr class="click" data-id="${e.id}" style="${e.active ? "" : "opacity:.55"}"><td class="muted">${esc(e.code)}</td><td><div class="d-cell">${empAvatar(e)}<div><div class="bold">${esc(e.name)}${e.nickname ? ` <span class="muted">(${esc(e.nickname)})</span>` : ""}</div><div class="muted small">${e.startDate ? "เริ่มงาน " + thDate(e.startDate, true) : ""}${e.fileCount ? ` · ${icon("clip", "").replace("<svg", '<svg style="width:12px;height:12px;vertical-align:-2px"')} เอกสาร ${e.fileCount}` : ""}</div></div></div></td>
       <td>${esc(e.position || "-")}</td><td>${e.payType === "daily" ? "รายวัน" : "รายเดือน"}</td><td class="num bold">${baht(e.rate)}<span class="muted small">/${e.payType === "daily" ? "วัน" : "เดือน"}</span></td>
       <td>${e.sso ? `<span class="chip blue">หักประกันสังคม</span>` : `<span class="chip">ไม่หัก</span>`}</td><td class="small">${esc(e.bankName)} ${esc(e.bankAccount)}</td><td>${e.hasPin ? `<span class="chip good plain">ตั้งแล้ว</span>` : `<span class="chip plain">ยังไม่ตั้ง</span>`}</td><td>${e.active ? `<span class="chip good">ทำงานอยู่</span>` : `<span class="chip">ลาออก / ปิด</span>`}</td></tr>`).join("")}</tbody></table>`
     : emptyBox("ยังไม่มีพนักงาน — กด “เพิ่มพนักงาน”", "users");
   $$("tr[data-id]", c).forEach(tr => { tr.onclick = () => empModal(emps.find(e => e.id === tr.dataset.id), () => self.render(c)); });
 } };
+const EMP_DOC_TYPES = ["บัตรประชาชน", "ทะเบียนบ้าน", "สัญญาจ้าง", "ใบรับรองแพทย์", "สมุดบัญชีธนาคาร", "ใบอนุญาตทำงาน", "วุฒิการศึกษา", "อื่นๆ"];
+async function bindEmpDocs(root, e, ced) {
+  const box = $("[data-edocs]", root); if (!box) return;
+  let files = [];
+  const draw = () => {
+    if (!files.length) { box.innerHTML = `<div class="muted small">ยังไม่มีเอกสาร</div>`; return; }
+    box.innerHTML = `<div class="file-grid">${files.map(f => { const img = /^image/.test(f.mime);
+      return `<div class="file-tile"><div class="th" data-edv="${f.id}" style="${img ? `background-image:url('${authUrl("/emp-files/" + f.id)}')` : ""}">${img ? "" : icon("file")}</div><div class="fn"><b>${esc(f.docType)}</b><br><span class="muted">${thDate(new Date(f.createdAt).toISOString().slice(0, 10), true)}</span></div>${ced ? `<button class="rm" data-edrm="${f.id}" title="ลบเอกสาร">×</button>` : ""}</div>`; }).join("")}</div>`;
+    const imgs = files.filter(f => /^image/.test(f.mime));
+    $$("[data-edv]", box).forEach(t => { t.onclick = () => { const f = files.find(x => x.id === t.dataset.edv);
+      if (/^image/.test(f.mime)) lightbox(imgs.map(x => ({ url: authUrl("/emp-files/" + x.id), name: x.docType + " · " + x.filename })), imgs.indexOf(f)); else window.open(authUrl("/emp-files/" + f.id), "_blank"); }; });
+    $$("[data-edrm]", box).forEach(b => { b.onclick = async () => { const f = files.find(x => x.id === b.dataset.edrm);
+      if (!await confirmBox(`ลบเอกสาร “${f.docType}” ของ ${e.name}?`, { danger: true, okText: "ลบเอกสาร" })) return;
+      try { await bapi("DELETE", "/emp-files/" + f.id); toast("ลบเอกสารแล้ว"); await load(); } catch (er) { toast(er.message, "bad"); } }; });
+  };
+  const load = async () => { try { files = (await bapi("GET", "/employees/" + e.id + "/files")).files; draw(); } catch (er) { box.innerHTML = `<div class="muted small">${esc(er.message)}</div>`; } };
+  const inp = $("[data-edfile]", root);
+  if (inp) inp.onchange = async ev => {
+    const list = [...ev.target.files]; ev.target.value = ""; if (!list.length) return;
+    const docType = $("[data-edtype]", root).value; const lbl = inp.parentElement; lbl.classList.add("disabled");
+    try { for (const file of list) { if (file.size > 12 * 1024 * 1024) { toast(file.name + " ใหญ่เกินไป", "bad"); continue; }
+        const r = await fileToB64(file, 2000); await bapi("POST", "/employees/" + e.id + "/files", { docType, filename: r.filename, mime: r.mime || "image/jpeg", data: r.data }); }
+      toast("แนบเอกสารแล้ว"); await load(); } catch (er) { toast(er.message, "bad"); } finally { lbl.classList.remove("disabled"); }
+  };
+  load();
+}
 function empModal(e, after) {
   const isNew = !e; e = e || { code: "", name: "", nickname: "", position: "", phone: "", idCard: "", bankName: "", bankAccount: "", startDate: "", payType: "monthly", rate: "", sso: true, note: "", active: true };
-  const m = openModal({ title: isNew ? "เพิ่มพนักงาน" : "ข้อมูลพนักงาน", size: "lg", body: `<div class="grid g3">
+  const ced = canEdit("employees");
+  const m = openModal({ title: isNew ? "เพิ่มพนักงาน" : "ข้อมูลพนักงาน", size: "lg", body: `${ced ? `<div style="margin-bottom:14px">${photoBox(e.photoV ? empPhoto(e) : "", "รูปโปรไฟล์พนักงาน", true)}</div>` : (e.photoV ? `<div class="emp-ph-big" style="background-image:url('${empPhoto(e)}')"></div>` : "")}<div class="grid g3">
     <label class="field"><span>รหัสพนักงาน</span><input class="input" name="code" value="${esc(e.code)}" placeholder="ว่าง = สร้างให้อัตโนมัติ"></label>
     <label class="field"><span>ชื่อ-นามสกุล <em>*</em></span><input class="input" name="name" value="${esc(e.name)}"></label>
     <label class="field"><span>ชื่อเล่น</span><input class="input" name="nickname" value="${esc(e.nickname)}"></label>
@@ -1202,13 +1385,21 @@ function empModal(e, after) {
     <div class="section-t" style="margin-top:18px">PIN สำหรับเช็คอินเข้า-ออกงาน</div><div class="grid g3">
     <label class="field"><span>${e.hasPin ? "ตั้ง PIN ใหม่ (เว้นว่าง = ใช้ PIN เดิม)" : "PIN 4-6 หลัก"}</span><input class="input" name="pin" inputmode="numeric" maxlength="6" autocomplete="off" placeholder="${e.hasPin ? "••••" : "เช่น 1234"}"></label>
     <div class="field" style="align-self:end">${e.hasPin ? `<label class="check" style="height:38px"><input type="checkbox" name="clearPin"> ลบ PIN (ปิดการเช็คอินของคนนี้)</label>` : `<div class="field-hint">พนักงานใช้ PIN นี้ยืนยันตัวตนตอนเช็คอินบนมือถือ</div>`}</div></div>
-    <label class="field" style="margin-top:14px"><span>หมายเหตุ</span><input class="input" name="note" value="${esc(e.note)}"></label>`,
+    <label class="field" style="margin-top:14px"><span>หมายเหตุ</span><input class="input" name="note" value="${esc(e.note)}"></label>
+    <div class="section-t" style="margin-top:18px">เอกสารพนักงาน</div>
+    ${isNew ? `<div class="muted small">บันทึกข้อมูลพนักงานก่อน แล้วเปิดอีกครั้งเพื่อแนบเอกสาร (บัตรประชาชน สัญญาจ้าง ฯลฯ)</div>` : `<div data-edocs><div class="muted small">กำลังโหลด…</div></div>
+      ${ced ? `<div class="row wrap" style="gap:8px;margin-top:10px"><select class="input sm" style="width:auto" data-edtype>${EMP_DOC_TYPES.map(n => opt(n)).join("")}</select>
+        <label class="btn sm">${icon("upload", "")} แนบเอกสาร / ถ่ายรูป<input type="file" accept="image/*,application/pdf" multiple data-edfile hidden></label><span class="muted small">รูปภาพหรือ PDF ไม่เกิน 8MB</span></div>` : ""}`}`,
     foot: !canEdit("employees") ? `<button class="btn" data-close>ปิด</button>` : `${isNew ? "" : `<div class="left"><button class="btn danger" data-del>${icon("trash")} ลบ</button><button class="btn" data-act>${e.active ? "ปิดใช้งาน (ลาออก)" : "เปิดใช้งานอีกครั้ง"}</button></div>`}<button class="btn" data-close>ยกเลิก</button><button class="btn primary" data-save>${icon("check")} บันทึก</button>` });
+  const getPhoto = ced ? bindPhotoBox(m.el) : () => undefined;
+  if (!isNew) bindEmpDocs(m.el, e, ced);
+  const bigPh = $(".emp-ph-big", m.el); if (bigPh) bigPh.onclick = () => lightbox([{ url: empPhoto(e), name: e.name }], 0);
   $("[name=payType]", m.el).onchange = ev => { $("[data-ratelbl]", m.el).innerHTML = `อัตรา (บาท/${ev.target.value === "daily" ? "วัน" : "เดือน"}) <em>*</em>`; };
   const sv = $("[data-save]", m.el);
   if (!sv) return;
   sv.onclick = () => withBtn(sv, async () => { const f = formData(m.el); f.rate = num(f.rate, NaN); if (!isFinite(f.rate)) throw new Error("กรุณาใส่อัตราค่าจ้าง");
     f.pin = String(f.pin || "").trim(); if (f.pin && !/^\d{4,6}$/.test(f.pin)) throw new Error("PIN ต้องเป็นตัวเลข 4-6 หลัก");
+    const pv = getPhoto(); if (pv !== undefined) f.photo = pv;
     if (isNew) await bapi("POST", "/employees", f); else await bapi("PUT", "/employees/" + e.id, f); toast("บันทึกข้อมูลพนักงานแล้ว"); m.close(); after(); }).catch(() => {});
   const act = $("[data-act]", m.el); if (act) act.onclick = async () => { await bapi("PUT", "/employees/" + e.id, { active: !e.active }); toast("อัปเดตสถานะแล้ว"); m.close(); after(); };
   const del = $("[data-del]", m.el); if (del) del.onclick = async () => { if (!await confirmBox("ลบพนักงาน " + e.name + "?", { danger: true, okText: "ลบ" })) return; try { await bapi("DELETE", "/employees/" + e.id); toast("ลบแล้ว"); m.close(); after(); } catch (err) { toast(err.message, "bad"); } };
@@ -1669,7 +1860,7 @@ async function renderCheckin(bid) {
   let saved = {}; try { saved = JSON.parse(localStorage.getItem("ci_" + bid) || "{}"); } catch (e) {}
   const clock = () => new Date().toLocaleTimeString("th-TH", { timeZone: "Asia/Bangkok", hour: "2-digit", minute: "2-digit", second: "2-digit" });
   app.innerHTML = `<div class="auth-wrap ci"><div class="auth-card" style="max-width:420px">
-    <div class="row"><div class="branch-dot" style="background:${esc(info.branch.color || "#1f6feb")}">${esc(info.branch.code || initials(info.branch.name))}</div><div class="grow"><div class="bold">${esc(info.branch.name)}</div><div class="muted small">${esc(info.company.name)} · ลงเวลาเข้า-ออกงาน</div></div></div>
+    <div class="row">${bdotH(info.branch, `background:${esc(info.branch.color || "#1f6feb")}`)}<div class="grow"><div class="bold">${esc(info.branch.name)}</div><div class="muted small">${esc(info.company.name)} · ลงเวลาเข้า-ออกงาน</div></div></div>
     <div class="ci-clock" data-clock>${clock()}</div><div class="muted small" style="text-align:center;margin-top:-6px">${thDate(today())} · เข้างาน ${esc(info.workStart)} น.</div>
     ${!info.enabled ? `<div class="warn-box" style="margin-top:18px">สาขานี้ยังไม่เปิดระบบเช็คอิน — แจ้งผู้ดูแลระบบ</div>` : `
     <div data-err style="margin-top:14px"></div><div class="stack">
@@ -1919,7 +2110,7 @@ ADMIN_PAGES.overview = { title: "ภาพรวมทุกสาขา", async
       <div class="card kpi"><div class="lbl"><i style="background:var(--invest)"></i>มูลค่าสต็อกรวม</div><div class="val">${baht(t.stockValue)}</div><div class="sub">พนักงาน ${t.employees} คน</div></div></div>
     <div class="card" style="margin-bottom:14px"><div class="card-h"><h3 class="grow">เปรียบเทียบรายสาขา</h3><div class="legend"><span><i style="background:#257de0"></i>รายรับ</span><span><i style="background:#f47230"></i>รายจ่าย</span></div></div><div class="card-b" data-chart></div></div>
     <div class="card"><div class="tbl-wrap"><table class="tbl"><thead><tr><th>สาขา</th><th class="num">รายรับ</th><th class="num">รายจ่าย</th><th class="num">กำไรสุทธิ</th><th class="num">ค้างจ่าย</th><th class="num">มูลค่าสต็อก</th><th class="num">พนักงาน</th><th></th></tr></thead><tbody>
-      ${o.branches.map(b => `<tr><td><div class="row"><div class="branch-dot" style="width:30px;height:30px;font-size:11px;border-radius:8px;background:${esc(b.color)}">${esc(b.code || initials(b.name))}</div><div><div class="bold">${esc(b.name)}</div>${b.active ? "" : `<span class="chip">ปิดใช้งาน</span>`}${b.lowStock ? ` <span class="chip warn">สต็อกใกล้หมด ${b.lowStock}</span>` : ""}</div></div></td>
+      ${o.branches.map(b => `<tr><td><div class="row">${bdotH(b, `width:30px;height:30px;font-size:11px;border-radius:8px;background:${esc(b.color)}`)}<div><div class="bold">${esc(b.name)}</div>${b.active ? "" : `<span class="chip">ปิดใช้งาน</span>`}${b.lowStock ? ` <span class="chip warn">สต็อกใกล้หมด ${b.lowStock}</span>` : ""}</div></div></td>
         <td class="num">${fmt(b.income)}</td><td class="num">${fmt(b.expense)}</td><td class="num bold ${b.net < 0 ? "neg" : ""}">${fmt(b.net)}</td><td class="num">${b.payable ? fmt(b.payable) : "-"}</td><td class="num">${fmt(b.stockValue)}</td><td class="num">${b.employees}</td>
         <td><button class="btn sm" data-open="${b.id}">เปิดบัญชีสาขา →</button></td></tr>`).join("")}</tbody>
       <tfoot><tr><td>รวม</td><td class="num">${fmt(t.income)}</td><td class="num">${fmt(t.expense)}</td><td class="num">${fmt(t.net)}</td><td></td><td class="num">${fmt(t.stockValue)}</td><td class="num">${t.employees}</td><td></td></tr></tfoot></table></div></div>`;
@@ -1934,7 +2125,7 @@ ADMIN_PAGES.branches = { title: "จัดการสาขา", async render(c
   $("[data-new]", c).onclick = () => branchModal(null, br, () => self.render(c));
   $("[data-tbl]", c).innerHTML = br.length ? `<table class="tbl"><thead><tr><th></th><th>สาขา</th><th>ติดต่อ</th><th>สถานะ</th><th>เข้าใช้ล่าสุด</th><th>เปลี่ยนรหัสล่าสุด</th><th></th></tr></thead><tbody>
     ${br.map((b, i) => `<tr><td style="width:64px"><div class="row" style="gap:0"><button class="btn ghost sm icon" data-up="${i}" ${i ? "" : "disabled"}>${icon("up")}</button><button class="btn ghost sm icon" data-dn="${i}" ${i < br.length - 1 ? "" : "disabled"}>${icon("down")}</button></div></td>
-      <td><div class="row"><div class="branch-dot" style="width:34px;height:34px;font-size:12px;border-radius:9px;background:${esc(b.color)}">${esc(b.code || initials(b.name))}</div><div><div class="bold">${esc(b.name)}</div><div class="muted small">${esc(b.code)}${b.taxId ? " · เลขผู้เสียภาษี " + esc(b.taxId) : ""}</div></div></div></td>
+      <td><div class="row">${bdotH(b, `width:34px;height:34px;font-size:12px;border-radius:9px;background:${esc(b.color)}`)}<div><div class="bold">${esc(b.name)}</div><div class="muted small">${esc(b.code)}${b.taxId ? " · เลขผู้เสียภาษี " + esc(b.taxId) : ""}</div></div></div></td>
       <td class="small">${esc(b.phone || "-")}<div class="muted desc" style="max-width:220px">${esc(b.address)}</div></td><td>${b.active ? `<span class="chip good">ใช้งาน</span>` : `<span class="chip">ปิดใช้งาน</span>`}</td>
       <td class="small">${thDateTime(b.lastLoginAt)}</td><td class="small">${thDateTime(b.passChangedAt)}</td>
       <td style="white-space:nowrap"><button class="btn sm" data-open="${b.id}">เปิดบัญชี</button> <button class="btn sm" data-edit="${b.id}">${icon("edit")} แก้ไข</button> <button class="btn sm" data-pw="${b.id}">${icon("key")} ตั้งรหัสใหม่</button> <button class="btn sm" data-ci="${b.id}">${icon("pin")} เช็คอิน${b.checkin.enabled ? ` <span class="chip good plain" style="padding:0 6px">เปิด</span>` : ""}</button></td></tr>`).join("")}</tbody></table>`
@@ -1978,16 +2169,17 @@ function branchModal(b, all, after) {
     <label class="field"><span>เบอร์โทร</span><input class="input" name="phone" value="${esc(b.phone)}"></label>
     <label class="field"><span>เลขประจำตัวผู้เสียภาษี (ถ้าแยกจากบริษัท)</span><input class="input" name="taxId" value="${esc(b.taxId)}"></label></div>
     <label class="field" style="margin-top:14px"><span>ที่อยู่</span><textarea class="input" name="address" rows="2">${esc(b.address)}</textarea></label>
+    <div style="margin-top:14px">${photoBox(b.logo || "", "รูปโปรไฟล์ / โลโก้สาขา (แสดงแทนรหัสสาขา)", false, 320)}</div>
     <div class="field" style="margin-top:14px"><span class="small" style="display:block;margin-bottom:6px;color:var(--text-2);font-weight:500">สีประจำสาขา</span><div class="color-pick">${COLORS.map(x => `<button type="button" data-color="${x}" class="${x === b.color ? "on" : ""}" style="background:${x}"></button>`).join("")}</div></div>
     ${isNew ? `<div class="section-t" style="margin-top:18px">รหัสผ่านเข้าสาขา</div><div class="grid g2"><label class="field"><span>รหัสผ่าน (อย่างน้อย 6 ตัว) <em>*</em></span>${pwInput("password", "", "new-password")}</label><label class="field"><span>ยืนยันรหัสผ่าน <em>*</em></span>${pwInput("confirm", "", "new-password")}</label></div>
       <label class="field" style="margin-top:14px"><span>หมวด / ช่องทาง / หน่วยนับเริ่มต้น</span><select class="input" name="copyFrom">${opt("", "ใช้ค่าเริ่มต้นของระบบ (ร้านอาหาร)", !all.length)}${all.map((x, i) => opt(x.id, "คัดลอกจาก " + x.name, i === 0)).join("")}</select></label>` : ""}
     ${!isNew ? `<div class="section-t" style="margin-top:18px">อันตราย</div><div class="row wrap"><button type="button" class="btn" data-toggle>${b.active ? "ปิดใช้งานสาขา (ซ่อนจากหน้าแรก)" : "เปิดใช้งานสาขาอีกครั้ง"}</button><button type="button" class="btn danger" data-delete>${icon("trash")} ลบสาขาและข้อมูลทั้งหมด</button></div>` : ""}`,
     foot: `<button class="btn" data-close>ยกเลิก</button><button class="btn primary" data-save>${icon("check")} ${isNew ? "สร้างสาขา" : "บันทึก"}</button>` });
-  bindPwEyes(m.el);
+  bindPwEyes(m.el); const getLogo = bindPhotoBox(m.el);
   let color = b.color;
   $$("[data-color]", m.el).forEach(x => { x.onclick = () => { color = x.dataset.color; $$("[data-color]", m.el).forEach(y => y.classList.toggle("on", y === x)); }; });
   const sv = $("[data-save]", m.el);
-  sv.onclick = () => withBtn(sv, async () => { const f = formData(m.el); f.color = color;
+  sv.onclick = () => withBtn(sv, async () => { const f = formData(m.el); f.color = color; const lg = getLogo(); if (lg !== undefined) f.logo = lg;
     if (isNew) { if (f.password !== f.confirm) throw new Error("ยืนยันรหัสผ่านไม่ตรงกัน"); await api("POST", "/api/admin/branches", f); } else await api("PUT", "/api/admin/branches/" + b.id, f);
     m.close(); toast(isNew ? "สร้างสาขา " + f.name + " แล้ว" : "บันทึกแล้ว"); after(); }).catch(() => {});
   const tg = $("[data-toggle]", m.el); if (tg) tg.onclick = async () => { await api("PUT", "/api/admin/branches/" + b.id, { active: !b.active }); m.close(); toast("อัปเดตสถานะสาขาแล้ว"); after(); };
@@ -2005,12 +2197,60 @@ ADMIN_PAGES.lists = { title: "หมวด & ช่องทาง", state: { ki
   const synced = (await api("GET", "/api/admin/settings")).settings.lists_sync_all === "1";
   c.innerHTML = `<div class="page-head"><div class="grow"><h2>หมวด & ช่องทาง</h2><div class="muted small">${synced ? "โหมด <b>ใช้ร่วมกันทุกสาขา</b> — แก้ที่สาขาไหนก็มีผลทุกสาขา" : "โหมดแยกสาขา — แต่ละสาขาตั้งหมวดของตัวเอง"} · เปลี่ยนโหมดได้ที่ ตั้งค่าบริษัท & ระบบ</div></div>
     <label class="row"><span class="muted small">สาขา</span><select class="input" style="width:220px" data-bid>${br.map(b => opt(b.id, b.name, b.id === st.bid)).join("")}</select></label>
-    ${br.length > 1 ? `<button class="btn primary" data-copy>${icon("copy")} คัดลอกจากสาขาหนึ่งไปสาขาอื่น</button>` : ""}</div><div data-ed></div>`;
+    ${br.length > 1 ? `<button class="btn" data-copystock>${icon("stock")} คัดลอกสินค้าสต็อก</button><button class="btn primary" data-copy>${icon("copy")} คัดลอกจากสาขาหนึ่งไปสาขาอื่น</button>` : ""}</div><div data-ed></div>`;
   $("[data-bid]", c).onchange = e => { st.bid = e.target.value; ADMIN_PAGES.lists.render(c); };
   if ($("[data-copy]", c)) $("[data-copy]", c).onclick = () => copyListsModal(br, st.bid, () => ADMIN_PAGES.lists.render(c));
+  if ($("[data-copystock]", c)) $("[data-copystock]", c).onclick = () => copyStockModal(st.bid);
   await listsEditor($("[data-ed]", c), st.bid, S.adminToken, st);
 } };
 // คัดลอกหมวด / ช่องทาง / ผู้ขาย / หน่วย (และสินค้าสต็อก) จากสาขาต้นทาง ไปสาขาอื่น
+/* Admin: คัดลอกสินค้าสต็อกที่เลือก ไปสาขาอื่น — คัดลอกเฉพาะรายละเอียด ไม่คัดลอกจำนวน (v2.6) */
+async function copyStockModal(fromId, after, preIds) {
+  let br; try { br = (await api("GET", "/api/admin/branches")).branches; } catch (e) { return toast(e.message, "bad"); }
+  if (br.length < 2) return toast("มีสาขาเดียว ยังไม่มีสาขาให้คัดลอกไป", "bad");
+  if (!br.some(b => b.id === fromId)) fromId = br[0].id;
+  let items = [], sel = new Set();
+  const m = openModal({ title: "คัดลอกสินค้าสต็อกไปสาขาอื่น", size: "lg", body: `
+    <div class="info-box" style="margin-bottom:12px">คัดลอกเฉพาะ <b>รายละเอียด</b> (ชื่อ รหัส หมวด หน่วย จุดสั่งซื้อ หมายเหตุ รูป) — <b>ไม่คัดลอกจำนวนคงเหลือและต้นทุน</b> สาขาปลายทางจะเริ่มที่ 0</div>
+    <label class="field"><span>จากสาขา (ต้นทาง)</span><select class="input" name="from">${br.map(b => opt(b.id, b.name, b.id === fromId)).join("")}</select></label>
+    <div class="section-t row" style="margin-top:14px"><span class="grow">เลือกสินค้า <span class="muted" data-cnt></span></span><button type="button" class="btn sm" data-all>เลือกทั้งหมด</button><button type="button" class="btn sm ghost" data-none>ล้าง</button></div>
+    <div class="search" style="margin-bottom:8px;max-width:none">${icon("search", "")}<input class="input" data-q placeholder="ค้นหาสินค้า"></div>
+    <div class="cs-list" data-list><div class="muted small">กำลังโหลด…</div></div>
+    <div class="section-t" style="margin-top:14px">ไปยังสาขา (ปลายทาง)</div><div class="row wrap" data-tgs></div>
+    <label class="check" style="margin-top:12px"><input type="checkbox" name="withPhoto" checked> คัดลอกรูปสินค้าด้วย</label>
+    <label class="check" style="margin-top:6px"><input type="checkbox" name="updateExisting"> ถ้าสาขาปลายทางมีสินค้าชื่อเดียวกันแล้ว ให้อัปเดตรายละเอียดตามต้นทาง (จำนวนคงเหลือไม่เปลี่ยน)</label>`,
+    foot: `<button class="btn" data-close>ยกเลิก</button><button class="btn primary" data-ok>${icon("copy")} คัดลอก</button>` });
+  const el = m.el;
+  const drawT = () => { const f = $("[name=from]", el).value; $("[data-tgs]", el).innerHTML = br.filter(b => b.id !== f).map(b => `<label class="check chip-check"><input type="checkbox" data-tg="${b.id}" ${br.length === 2 ? "checked" : ""}> ${esc(b.name)}</label>`).join(""); };
+  const drawL = () => {
+    const q = $("[data-q]", el).value.trim().toLowerCase();
+    const show = items.filter(i => !q || (i.name + " " + i.sku + " " + i.category).toLowerCase().includes(q));
+    const cats = [...new Set(show.map(i => i.category || NOCAT))];
+    $("[data-list]", el).innerHTML = !items.length ? `<div class="muted small">สาขานี้ยังไม่มีสินค้าในสต็อก</div>` : !show.length ? `<div class="muted small">ไม่พบสินค้า</div>` :
+      cats.map(cn => `<div class="cs-gh">${esc(cn)}</div>` + show.filter(i => (i.category || NOCAT) === cn).map(i => `<label class="cs-item ${i.active ? "" : "off"}"><input type="checkbox" data-it="${i.id}" ${sel.has(i.id) ? "checked" : ""}><span class="grow"><b>${esc(i.name)}</b> <span class="muted small">${esc(i.unit || "")}${i.sku ? " · " + esc(i.sku) : ""}${i.active ? "" : " · ปิดใช้งาน"}${i.hasPhoto ? " · มีรูป" : ""}</span></span></label>`).join("")).join("");
+    $$("[data-it]", el).forEach(c => { c.onchange = () => { c.checked ? sel.add(c.dataset.it) : sel.delete(c.dataset.it); cnt(); }; });
+    cnt();
+  };
+  const cnt = () => { $("[data-cnt]", el).textContent = `(เลือก ${sel.size} / ${items.length})`; };
+  const load = async () => { sel = new Set(preIds || []); preIds = null; $("[data-list]", el).innerHTML = `<div class="muted small">กำลังโหลด…</div>`;
+    try { items = (await api("GET", "/api/admin/stock/items?branch=" + encodeURIComponent($("[name=from]", el).value))).items; } catch (e) { items = []; toast(e.message, "bad"); } drawL(); };
+  $("[name=from]", el).onchange = () => { drawT(); load(); };
+  $("[data-q]", el).oninput = debounce(drawL, 150);
+  $("[data-all]", el).onclick = () => { const q = $("[data-q]", el).value.trim().toLowerCase(); items.filter(i => i.active && (!q || (i.name + " " + i.sku + " " + i.category).toLowerCase().includes(q))).forEach(i => sel.add(i.id)); drawL(); };
+  $("[data-none]", el).onclick = () => { sel.clear(); drawL(); };
+  drawT(); load();
+  const ok = $("[data-ok]", el); ok.onclick = () => withBtn(ok, async () => {
+    const to = $$("[data-tg]", el).filter(x => x.checked).map(x => x.dataset.tg);
+    if (!sel.size) throw new Error("กรุณาเลือกสินค้าอย่างน้อย 1 รายการ");
+    if (!to.length) throw new Error("กรุณาเลือกสาขาปลายทาง");
+    const r = await api("POST", "/api/admin/stock/copy", { from: $("[name=from]", el).value, to, itemIds: [...sel], withPhoto: $("[name=withPhoto]", el).checked, updateExisting: $("[name=updateExisting]", el).checked });
+    m.close();
+    openModal({ title: `คัดลอก ${r.count} รายการจาก ${esc(r.from)} แล้ว`, body: `<table class="tbl"><thead><tr><th>สาขา</th><th class="num">เพิ่มใหม่</th><th class="num">อัปเดต</th><th class="num">ข้าม (มีอยู่แล้ว)</th></tr></thead><tbody>
+      ${r.result.map(x => `<tr><td>${esc(x.branch)}</td><td class="num bold">${x.added}</td><td class="num">${x.updated}</td><td class="num muted">${x.skipped}</td></tr>`).join("")}</tbody></table>
+      <div class="muted small" style="margin-top:10px">สินค้าที่เพิ่มใหม่มีจำนวนคงเหลือ 0 — สาขาปลายทางรับเข้า/ตรวจนับเองได้เลย</div>`, foot: `<button class="btn primary" data-close>ตกลง</button>` });
+    if (after) after();
+  }).catch(() => {});
+}
 function copyListsModal(br, fromId, after) {
   const m = openModal({ title: "คัดลอกหมวด & รายการ ระหว่างสาขา", size: "lg", body: `<div class="grid g2"><label class="field"><span>คัดลอกจากสาขา (ต้นทาง)</span><select class="input" name="from">${br.map(b => opt(b.id, b.name, b.id === fromId)).join("")}</select></label><div></div></div>
     <div class="section-t" style="margin-top:16px">ไปยังสาขา (ปลายทาง)</div><label class="check" style="margin-bottom:8px"><input type="checkbox" data-alltg> ทุกสาขา</label><div class="row wrap" data-tgs></div>

@@ -13,7 +13,7 @@ const crypto = require("crypto");
 const { Pool } = require("pg");
 
 const PORT = Number(process.env.PORT) || 3000;
-const BUILD_ID = "2.5.0";
+const BUILD_ID = "2.6.0";
 const INIT_ADMIN_USER = String(process.env.ADMIN_USER || "admin").trim();
 const INIT_ADMIN_PASS = String(process.env.ADMIN_PASS || "admin1234");
 const PUBLIC_DIR = path.join(__dirname, "public");
@@ -72,6 +72,18 @@ function checkNewPassword(pw) {
   return pw;
 }
 const sha256 = s => crypto.createHash("sha256").update(String(s)).digest("hex");
+// รูปภาพเก็บเป็น data URL (ย่อขนาดจากฝั่งเว็บแล้ว) · "" = ลบรูป
+function checkImg(v, maxLen) {
+  v = String(v || ""); if (!v) return "";
+  if (v.length > (maxLen || 600000)) throw bad("รูปภาพใหญ่เกินไป");
+  if (!/^data:image\/(png|jpe?g|webp|gif);base64,[A-Za-z0-9+/=]+$/.test(v)) throw bad("ไฟล์รูปภาพไม่ถูกต้อง");
+  return v;
+}
+function sendDataUrl(res, v) {
+  const m = String(v || "").match(/^data:([^;]+);base64,(.*)$/); if (!m) throw new HttpError(404, "ไม่พบรูป");
+  const buf = Buffer.from(m[2], "base64");
+  res.writeHead(200, { "Content-Type": m[1], "Content-Length": buf.length, "Cache-Control": "private, max-age=86400", "X-Content-Type-Options": "nosniff" }); res.end(buf);
+}
 
 // ป้องกันการเดารหัส: ผิด 5 ครั้งใน 15 นาที → ล็อก 5 นาที (แยกตาม IP + เป้าหมาย)
 const loginFails = new Map();
@@ -233,6 +245,13 @@ async function initDb() {
       total NUMERIC NOT NULL DEFAULT 0, interest NUMERIC NOT NULL DEFAULT 0, months INT NOT NULL, first_due TEXT, status TEXT NOT NULL DEFAULT 'active', created_by TEXT, created_at BIGINT);
     CREATE INDEX IF NOT EXISTS idx_card_plans_branch ON card_plans(branch_id, card);
     ALTER TABLE card_plans ADD COLUMN IF NOT EXISTS pay_day INT, ADD COLUMN IF NOT EXISTS body_json TEXT;
+    -- ===== v2.6: รูปสาขา / รูปสินค้า / รูปและเอกสารพนักงาน =====
+    ALTER TABLE branches ADD COLUMN IF NOT EXISTS logo TEXT;
+    ALTER TABLE stock_items ADD COLUMN IF NOT EXISTS photo TEXT;
+    ALTER TABLE employees ADD COLUMN IF NOT EXISTS photo TEXT, ADD COLUMN IF NOT EXISTS photo_at BIGINT;
+    CREATE TABLE IF NOT EXISTS emp_files (
+      id TEXT PRIMARY KEY, branch_id TEXT NOT NULL, employee_id TEXT NOT NULL, doc_type TEXT, filename TEXT, mime TEXT, size INT, data TEXT, created_by TEXT, created_at BIGINT);
+    CREATE INDEX IF NOT EXISTS idx_emp_files_emp ON emp_files(employee_id);
   `);
   const a = await pool.query("SELECT COUNT(*)::int AS c FROM admins");
   if (Number(a.rows[0].c) === 0) {
@@ -363,7 +382,7 @@ route("GET", "/api/health", async () => {
 });
 route("GET", "/api/public/info", async () => {
   const s = await getSettings();
-  const { rows } = await pool.query("SELECT id, code, name, color FROM branches WHERE active=TRUE ORDER BY sort_order, created_at");
+  const { rows } = await pool.query("SELECT id, code, name, color, logo FROM branches WHERE active=TRUE ORDER BY sort_order, created_at");
   return { company: { name: s.company_name, logo: s.company_logo }, branches: rows, build: BUILD_ID };
 });
 
@@ -441,7 +460,7 @@ route("POST", B + "/change-password", async ctx => {
 route("GET", B + "/info", async ctx => {
   ctx.allowMustChange = true; await needBranch(ctx);
   const s = await getSettings(); const b = ctx.branch, ss = ctx.session;
-  return { branch: { id: b.id, code: b.code, name: b.name, address: b.address, phone: b.phone, taxId: b.tax_id, color: b.color,
+  return { branch: { id: b.id, code: b.code, name: b.name, address: b.address, phone: b.phone, taxId: b.tax_id, color: b.color, logo: b.logo || "",
       checkin: { enabled: !!b.checkin_enabled, lat: b.checkin_lat, lng: b.checkin_lng, radius: Number(b.checkin_radius) || 100, workStart: b.work_start || "09:00", lateGrace: Number(b.late_grace) || 0 } },
     company: { name: s.company_name, address: s.company_address, taxId: s.company_tax_id, phone: s.company_phone, logo: s.company_logo },
     sso: { rate: num(s.sso_rate, 5), min: num(s.sso_min, 1650), max: num(s.sso_max, 17500) }, isAdmin: !!ss.isAdmin,
@@ -635,7 +654,7 @@ route("PUT", "/api/admin/settings", async ctx => {
 
 /* ---------------- admin: branches ---------------- */
 function branchOut(r) {
-  return { id: r.id, code: r.code, name: r.name, address: r.address, phone: r.phone, taxId: r.tax_id, color: r.color, active: r.active,
+  return { id: r.id, code: r.code, name: r.name, address: r.address, phone: r.phone, taxId: r.tax_id, color: r.color, active: r.active, logo: r.logo || "",
     createdAt: Number(r.created_at), lastLoginAt: Number(r.last_login_at) || null, passChangedAt: Number(r.pass_changed_at) || null,
     checkin: { enabled: !!r.checkin_enabled, lat: r.checkin_lat == null ? null : Number(r.checkin_lat), lng: r.checkin_lng == null ? null : Number(r.checkin_lng),
       radius: Number(r.checkin_radius) || 100, workStart: r.work_start || "09:00", lateGrace: Number(r.late_grace) || 0 } };
@@ -666,7 +685,7 @@ route("GET", "/api/admin/branches", async ctx => {
 function branchFields(b) {
   const name = str(b.name, 120); if (!name) throw bad("กรุณาใส่ชื่อสาขา");
   const color = /^#[0-9a-fA-F]{6}$/.test(b.color || "") ? b.color : "#2563eb";
-  return { name, code: str(b.code, 20), address: str(b.address, 400), phone: str(b.phone, 40), tax_id: str(b.taxId, 30), color };
+  return { name, code: str(b.code, 20), address: str(b.address, 400), phone: str(b.phone, 40), tax_id: str(b.taxId, 30), color, logo: b.logo === undefined ? undefined : checkImg(b.logo, 400000) };
 }
 route("POST", "/api/admin/branches", async ctx => {
   needAdmin(ctx);
@@ -674,6 +693,7 @@ route("POST", "/api/admin/branches", async ctx => {
   const id = uid();
   await pool.query("INSERT INTO branches (id,code,name,address,phone,tax_id,color,pass_hash,active,sort_order,created_at,pass_changed_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,TRUE,$9,$9,$9)",
     [id, f.code, f.name, f.address, f.phone, f.tax_id, f.color, hashPw(pw), now()]);
+  if (f.logo) await pool.query("UPDATE branches SET logo=$1 WHERE id=$2", [f.logo, id]);
   await seedLists(id, str(ctx.body.copyFrom, 100) || null);
   await logActivity(ctx, "branch_add", "สร้างสาขา " + f.name, id);
   return { ok: true, id };
@@ -690,6 +710,7 @@ route("PUT", "/api/admin/branches/:id", async ctx => {
   }
   const f = branchFields(ctx.body);
   await pool.query("UPDATE branches SET code=$1,name=$2,address=$3,phone=$4,tax_id=$5,color=$6 WHERE id=$7", [f.code, f.name, f.address, f.phone, f.tax_id, f.color, ctx.params.id]);
+  if (f.logo !== undefined) await pool.query("UPDATE branches SET logo=$1 WHERE id=$2", [f.logo || null, ctx.params.id]);
   await logActivity(ctx, "branch_edit", "แก้ไขข้อมูลสาขา " + f.name, ctx.params.id);
   return { ok: true };
 });
@@ -716,7 +737,7 @@ route("DELETE", "/api/admin/branches/:id", async ctx => {
   if (!verifyPw(String(ctx.body.adminPassword || ""), me.rows[0].pass_hash)) throw bad("รหัสผ่านผู้ดูแลไม่ถูกต้อง");
   if (str(ctx.body.confirmName, 200) !== rows[0].name) throw bad("พิมพ์ชื่อสาขาให้ตรงเพื่อยืนยันการลบ");
   const id = rows[0].id;
-  for (const t of ["files", "records", "lists", "stock_moves", "stock_items", "payroll_items", "payroll_runs", "employees", "doc_counters", "sessions", "transfers", "leaves", "advances", "attendance", "card_plans"]) {
+  for (const t of ["files", "records", "lists", "stock_moves", "stock_items", "payroll_items", "payroll_runs", "employees", "doc_counters", "sessions", "transfers", "leaves", "advances", "attendance", "card_plans", "emp_files"]) {
     await pool.query("DELETE FROM " + t + " WHERE branch_id=$1", [id]);
   }
   await pool.query("DELETE FROM branches WHERE id=$1", [id]);
@@ -774,7 +795,8 @@ route("GET", "/api/admin/backup", async ctx => {
   needAdmin(ctx);
   const withFiles = ctx.query.files === "1";
   const out = { app: "restaurant-accounting", build: BUILD_ID, exportedAt: new Date().toISOString(), tables: {} };
-  for (const t of ["settings", "admins", "users", "branches", "lists", "records", "doc_counters", "stock_items", "stock_moves", "employees", "payroll_runs", "payroll_items", "transfers", "leaves", "advances", "attendance", "card_plans", "activity", "files"]) {
+  for (const t of ["settings", "admins", "users", "branches", "lists", "records", "doc_counters", "stock_items", "stock_moves", "employees", "payroll_runs", "payroll_items", "transfers", "leaves", "advances", "attendance", "card_plans", "activity", "emp_files", "files"]) {
+    if (t === "emp_files" && !withFiles) { out.tables.emp_files = (await pool.query("SELECT id, branch_id, employee_id, doc_type, filename, mime, size, created_at FROM emp_files")).rows; continue; }
     if (t === "files" && !withFiles) { out.tables.files = (await pool.query("SELECT id, record_id, branch_id, filename, mime, size, created_at FROM files")).rows; continue; }
     out.tables[t] = (await pool.query("SELECT * FROM " + t)).rows;
   }
@@ -978,8 +1000,8 @@ route("POST", "/api/admin/lists/copy", async ctx => {
       for (const it of items) {
         const ex = await pool.query("SELECT 1 FROM stock_items WHERE branch_id=$1 AND lower(name)=lower($2)", [tid, it.name]);
         if (ex.rows.length) continue;
-        await pool.query("INSERT INTO stock_items (id,branch_id,sku,name,category,unit,min_qty,qty,avg_cost,active,note,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,0,0,TRUE,$8,$9,$9)",
-          [uid(), tid, it.sku, it.name, it.category, it.unit, it.min_qty, it.note, now()]);
+        await pool.query("INSERT INTO stock_items (id,branch_id,sku,name,category,unit,min_qty,qty,avg_cost,active,note,photo,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,0,0,TRUE,$8,$9,$10,$10)",
+          [uid(), tid, it.sku, it.name, it.category, it.unit, it.min_qty, it.note, it.photo || null, now()]);
         res.stockAdded++;
       }
     }
@@ -987,6 +1009,53 @@ route("POST", "/api/admin/lists/copy", async ctx => {
     await logActivity(ctx, "list_copy", "คัดลอกหมวด/ช่องทางจาก " + src.name + " ไป " + res.branch + ": เพิ่ม " + res.added + ", ปรับ " + res.updated + (b.removeExtra ? ", ลบ " + res.removed : "") + (b.stockItems ? ", สินค้าสต็อกใหม่ " + res.stockAdded : ""), tid);
   }
   return { ok: true, from: src.name, result };
+});
+
+// Admin: เลือกสินค้าสต็อกทีละรายการ คัดลอกไปสาขาอื่น (เฉพาะรายละเอียด — ไม่คัดลอกจำนวน/ต้นทุน) (v2.6)
+route("GET", "/api/admin/stock/items", async ctx => {
+  needAdmin(ctx);
+  const bid = str(ctx.query.branch, 100);
+  const { rows } = await pool.query(`SELECT id, sku, name, category, unit, min_qty, active, updated_at, (photo IS NOT NULL AND photo<>'') AS has_photo
+    FROM stock_items WHERE branch_id=$1 ORDER BY category, name`, [bid]);
+  return { items: rows.map(r => ({ id: r.id, sku: r.sku || "", name: r.name, category: r.category || "", unit: r.unit || "", minQty: Number(r.min_qty) || 0, active: r.active, hasPhoto: !!r.has_photo })) };
+});
+route("POST", "/api/admin/stock/copy", async ctx => {
+  needAdmin(ctx);
+  const b = ctx.body || {};
+  const from = str(b.from, 100);
+  const all = (await pool.query("SELECT id, name FROM branches ORDER BY sort_order, created_at")).rows;
+  const src = all.find(x => x.id === from); if (!src) throw bad("กรุณาเลือกสาขาต้นทาง");
+  const targets = (b.to === "all" ? all.map(x => x.id) : (Array.isArray(b.to) ? b.to.map(String) : [])).filter(id => id !== from && all.some(x => x.id === id));
+  if (!targets.length) throw bad("กรุณาเลือกสาขาปลายทางอย่างน้อย 1 สาขา");
+  const ids = Array.isArray(b.itemIds) ? b.itemIds.map(String).slice(0, 2000) : [];
+  if (!ids.length) throw bad("กรุณาเลือกสินค้าอย่างน้อย 1 รายการ");
+  const items = (await pool.query("SELECT * FROM stock_items WHERE branch_id=$1 AND id = ANY($2::text[]) ORDER BY category, name", [from, pgArr(ids)])).rows;
+  if (!items.length) throw bad("ไม่พบสินค้าที่เลือก");
+  const withPhoto = b.withPhoto !== false, update = !!b.updateExisting;
+  const result = [];
+  for (const tid of targets) {
+    const res = { branch: all.find(x => x.id === tid).name, added: 0, updated: 0, skipped: 0 };
+    const cats = new Set((await pool.query("SELECT name FROM lists WHERE branch_id=$1 AND kind='stock_category'", [tid])).rows.map(r => r.name));
+    for (const it of items) {
+      if (it.category && !cats.has(it.category)) { // หมวดใหม่ → เพิ่ม (ถ้าตั้งให้ใช้หมวดร่วมกันทุกสาขา จะเพิ่มให้ทุกสาขา)
+        await listOpAll(await syncBranchIds(tid), "add", "stock_category", { name: it.category });
+        cats.add(it.category);
+      }
+      const ex = (await pool.query("SELECT id FROM stock_items WHERE branch_id=$1 AND lower(name)=lower($2)", [tid, it.name])).rows[0];
+      if (ex) {
+        if (!update) { res.skipped++; continue; }
+        await pool.query("UPDATE stock_items SET sku=$1, category=$2, unit=$3, min_qty=$4, note=$5, updated_at=$6 WHERE id=$7", [it.sku, it.category, it.unit, it.min_qty, it.note, now(), ex.id]);
+        if (withPhoto && it.photo) await pool.query("UPDATE stock_items SET photo=$1 WHERE id=$2", [it.photo, ex.id]);
+        res.updated++; continue;
+      }
+      await pool.query("INSERT INTO stock_items (id,branch_id,sku,name,category,unit,min_qty,qty,avg_cost,active,note,photo,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,0,0,TRUE,$8,$9,$10,$10)",
+        [uid(), tid, it.sku, it.name, it.category, it.unit, it.min_qty, it.note, withPhoto ? (it.photo || null) : null, now()]);
+      res.added++;
+    }
+    result.push(res);
+    await logActivity(ctx, "stock_copy", "คัดลอกสินค้าสต็อก " + items.length + " รายการ จาก " + src.name + " ไป " + res.branch + ": เพิ่ม " + res.added + (update ? ", อัปเดต " + res.updated : ", ข้าม (มีแล้ว) " + res.skipped), tid);
+  }
+  return { ok: true, from: src.name, count: items.length, result };
 });
 
 /* ================= เอกสารบัญชี (รายรับ / รายจ่าย / สินทรัพย์) ================= */
@@ -1040,7 +1109,7 @@ function recordOut(r, files) {
     vatMode: r.vat_mode, vat: Number(r.vat_amount), total: Number(r.total), paymentChannel: r.payment_channel || "", dueDate: r.due_date || "",
     settledAt: Number(r.settled_at) || null, settledDate: r.settled_date || "", settledBy: r.settled_by || "", settledChannel: r.settled_channel || "",
     source: r.source, refId: r.ref_id || "", note: r.note || "", createdBy: r.created_by || "", createdAt: Number(r.created_at),
-    updatedBy: r.updated_by || "", updatedAt: Number(r.updated_at) || null, planId: r.plan_id || "", planSeq: r.plan_seq || null, planCount: r.plan_count || null, settleBatch: r.settle_batch || "", files: files || [], fileCount: r.file_count != null ? Number(r.file_count) : (files || []).length };
+    updatedBy: r.updated_by || "", updatedAt: Number(r.updated_at) || null, planId: r.plan_id || "", planSeq: r.plan_seq || null, planCount: r.plan_count || null, settleBatch: r.settle_batch || "", files: files || [], fileCount: r.file_count != null ? Number(r.file_count) : (files || []).length, thumbId: r.thumb_id || "" };
 }
 async function filesFor(ids) {
   if (!ids.length) return {};
@@ -1063,7 +1132,8 @@ route("GET", B + "/records", async ctx => {
   }
   if (ctx.query.status === "unsettled") where += " AND r.due_date IS NOT NULL AND r.due_date<>'' AND r.settled_at IS NULL";
   if (ctx.query.q) { params.push("%" + String(ctx.query.q).slice(0, 100) + "%"); where += ` AND (r.doc_no ILIKE $${params.length} OR r.party ILIKE $${params.length} OR r.description ILIKE $${params.length} OR r.items_json ILIKE $${params.length})`; }
-  const { rows } = await pool.query(`SELECT r.*, (SELECT COUNT(*) FROM files f WHERE f.record_id=r.id)::int AS file_count FROM records r WHERE ${where} ORDER BY r.rec_date DESC, r.created_at DESC LIMIT 2000`, params);
+  const { rows } = await pool.query(`SELECT r.*, (SELECT COUNT(*) FROM files f WHERE f.record_id=r.id)::int AS file_count,
+    (SELECT id FROM files f WHERE f.record_id=r.id AND f.mime LIKE 'image/%' ORDER BY f.created_at LIMIT 1) AS thumb_id FROM records r WHERE ${where} ORDER BY r.rec_date DESC, r.created_at DESC LIMIT 2000`, params);
   return { from, to, records: rows.map(r => recordOut(r)) };
 });
 route("GET", B + "/records/:id", async ctx => {
@@ -1438,12 +1508,13 @@ async function stockValueAt(bid, date) {
 function itemOut(r) {
   const qty = Number(r.qty), min = Number(r.min_qty), avg = Number(r.avg_cost);
   return { id: r.id, sku: r.sku || "", name: r.name, category: r.category || "", unit: r.unit || "", minQty: min, qty, avgCost: avg, value: r2(qty * avg),
-    active: r.active, note: r.note || "", low: min > 0 && qty <= min, moveCount: r.move_count != null ? Number(r.move_count) : undefined, lastMove: r.last_move || "",
+    active: r.active, note: r.note || "", low: min > 0 && qty <= min, photoV: r.has_photo ? Number(r.updated_at) || 1 : 0, moveCount: r.move_count != null ? Number(r.move_count) : undefined, lastMove: r.last_move || "",
     pending: Number(r.pending_count) || 0 };
 }
 route("GET", B + "/stock/items", async ctx => {
   await needBranch(ctx, ["stock", "expense", "invest"], "view");
-  const { rows } = await pool.query(`SELECT i.*, (SELECT COUNT(*) FROM stock_moves m WHERE m.item_id=i.id)::int AS move_count,
+  const { rows } = await pool.query(`SELECT i.id, i.branch_id, i.sku, i.name, i.category, i.unit, i.min_qty, i.qty, i.avg_cost, i.active, i.note, i.created_at, i.updated_at, (i.photo IS NOT NULL AND i.photo<>'') AS has_photo,
+    (SELECT COUNT(*) FROM stock_moves m WHERE m.item_id=i.id)::int AS move_count,
     (SELECT COUNT(*) FROM stock_moves m WHERE m.item_id=i.id AND m.status='pending')::int AS pending_count,
     (SELECT MAX(move_date) FROM stock_moves m WHERE m.item_id=i.id) AS last_move FROM stock_items i WHERE i.branch_id=$1 ORDER BY i.active DESC, i.category, i.name`, [ctx.branch.id]);
   return { items: rows.map(itemOut), canApprove: !!ctx.perms.approve.stock };
@@ -1461,6 +1532,7 @@ route("POST", B + "/stock/items", async ctx => {
   const id = uid();
   await pool.query("INSERT INTO stock_items (id,branch_id,sku,name,category,unit,min_qty,qty,avg_cost,active,note,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,0,0,TRUE,$8,$9,$9)",
     [id, ctx.branch.id, f.sku, f.name, f.category, f.unit, f.minQty, f.note, now()]);
+  if (ctx.body.photo) await pool.query("UPDATE stock_items SET photo=$1 WHERE id=$2", [checkImg(ctx.body.photo, 400000), id]);
   const openQty = num(ctx.body.openingQty, 0), openCost = num(ctx.body.openingCost, 0);
   let pending = false;
   if (openQty > 0) {
@@ -1486,6 +1558,7 @@ route("PUT", B + "/stock/items/:id", async ctx => {
   const dup = await pool.query("SELECT 1 FROM stock_items WHERE branch_id=$1 AND lower(name)=lower($2) AND id<>$3", [ctx.branch.id, f.name, ctx.params.id]);
   if (dup.rows.length) throw bad("มีสินค้าชื่อนี้อยู่แล้ว");
   await pool.query("UPDATE stock_items SET sku=$1,name=$2,category=$3,unit=$4,min_qty=$5,note=$6,updated_at=$7 WHERE id=$8", [f.sku, f.name, f.category, f.unit, f.minQty, f.note, now(), ctx.params.id]);
+  if (ctx.body.photo !== undefined) await pool.query("UPDATE stock_items SET photo=$1 WHERE id=$2", [checkImg(ctx.body.photo, 400000) || null, ctx.params.id]);
   await logActivity(ctx, "stock_item_edit", "แก้ไขสินค้า " + f.name, ctx.branch.id);
   return { ok: true };
 });
@@ -1501,6 +1574,12 @@ route("DELETE", B + "/stock/items/:id", async ctx => {
   await pool.query("DELETE FROM stock_items WHERE id=$1", [ctx.params.id]);
   await logActivity(ctx, "stock_item_delete", "ลบสินค้า " + cur.rows[0].name, ctx.branch.id);
   return { ok: true };
+});
+route("GET", B + "/stock/items/:id/photo", async (ctx, req, res) => {
+  await needBranch(ctx, ["stock", "expense", "invest"], "view");
+  const r = (await pool.query("SELECT photo FROM stock_items WHERE id=$1 AND branch_id=$2", [ctx.params.id, ctx.branch.id])).rows[0];
+  if (!r || !r.photo) throw new HttpError(404, "ไม่พบรูป");
+  sendDataUrl(res, r.photo); return undefined;
 });
 const MOVE_KINDS = { in: "รับเข้า", out: "เบิกใช้", waste: "ของเสีย / ทิ้ง", count: "ตรวจนับ (ปรับยอด)" };
 // แก้ไข/ลบรายการสต็อกได้ไหม: ผู้อนุมัติ = ทุกรายการ (ยกเว้นที่มาจากเอกสารซื้อ) · พนักงาน = การเบิกของตัวเองภายในวันเดียวกัน หรือรายการของตัวเองที่ยังรออนุมัติ/ไม่อนุมัติ
@@ -1622,14 +1701,16 @@ route("DELETE", B + "/stock/moves/:id", async ctx => {
 function empOut(r) {
   return { id: r.id, code: r.code || "", name: r.name, nickname: r.nickname || "", position: r.position || "", phone: r.phone || "", idCard: r.id_card || "",
     bankName: r.bank_name || "", bankAccount: r.bank_account || "", startDate: r.start_date || "", payType: r.pay_type, rate: Number(r.rate), sso: !!r.sso, active: !!r.active, note: r.note || "",
-    hasPin: !!r.pin_hash };
+    hasPin: !!r.pin_hash, photoV: r.has_photo ? Number(r.photo_at) || 1 : 0 };
 }
 route("GET", B + "/employees", async ctx => {
   await needBranch(ctx, ["employees", "payroll", "leave", "advance", "attendance"], "view");
-  const { rows } = await pool.query("SELECT * FROM employees WHERE branch_id=$1 ORDER BY active DESC, code, name", [ctx.branch.id]);
+  const { rows } = await pool.query(`SELECT e.*, (e.photo IS NOT NULL AND e.photo<>'') AS has_photo, (SELECT COUNT(*) FROM emp_files f WHERE f.employee_id=e.id)::int AS file_count
+    FROM employees e WHERE e.branch_id=$1 ORDER BY e.active DESC, e.code, e.name`, [ctx.branch.id]);
+  rows.forEach(r => { r.photo = null; });
   // คนที่ไม่มีสิทธิ์เมนูพนักงาน/เงินเดือน เห็นแค่ชื่อ (ไม่เห็นค่าจ้าง เลขบัตร บัญชีธนาคาร)
   const full = can(ctx, ["employees", "payroll"], "view");
-  return { employees: rows.map(r => { const e = empOut(r); return full ? e : { id: e.id, code: e.code, name: e.name, nickname: e.nickname, position: e.position, payType: e.payType, active: e.active, hasPin: e.hasPin }; }) };
+  return { employees: rows.map(r => { const e = empOut(r); return full ? { ...e, fileCount: Number(r.file_count) || 0 } : { id: e.id, code: e.code, name: e.name, nickname: e.nickname, position: e.position, payType: e.payType, active: e.active, hasPin: e.hasPin, photoV: e.photoV }; }) };
 });
 function checkPin(pin) { pin = String(pin == null ? "" : pin).trim(); if (!/^\d{4,6}$/.test(pin)) throw bad("PIN ต้องเป็นตัวเลข 4-6 หลัก"); return pin; }
 function empFields(b) {
@@ -1648,6 +1729,7 @@ route("POST", B + "/employees", async ctx => {
     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,TRUE,$15,$16,$16)`,
     [id, ctx.branch.id, f.code, f.name, f.nickname, f.position, f.phone, f.idCard, f.bankName, f.bankAccount, f.startDate, f.payType, f.rate, f.sso, f.note, now()]);
   if (ctx.body.pin) await pool.query("UPDATE employees SET pin_hash=$1 WHERE id=$2", [hashPw(checkPin(ctx.body.pin)), id]);
+  if (ctx.body.photo) await pool.query("UPDATE employees SET photo=$1, photo_at=$2 WHERE id=$3", [checkImg(ctx.body.photo, 400000), now(), id]);
   await logActivity(ctx, "employee_add", "เพิ่มพนักงาน " + f.name, ctx.branch.id);
   return { ok: true, id };
 });
@@ -1664,6 +1746,7 @@ route("PUT", B + "/employees/:id", async ctx => {
   await pool.query(`UPDATE employees SET code=$1,name=$2,nickname=$3,position=$4,phone=$5,id_card=$6,bank_name=$7,bank_account=$8,start_date=$9,pay_type=$10,rate=$11,sso=$12,note=$13,updated_at=$14 WHERE id=$15`,
     [f.code, f.name, f.nickname, f.position, f.phone, f.idCard, f.bankName, f.bankAccount, f.startDate, f.payType, f.rate, f.sso, f.note, now(), ctx.params.id]);
   let pinNote = "";
+  if (ctx.body.photo !== undefined) await pool.query("UPDATE employees SET photo=$1, photo_at=$2 WHERE id=$3", [checkImg(ctx.body.photo, 400000) || null, now(), ctx.params.id]);
   if (ctx.body.clearPin) { await pool.query("UPDATE employees SET pin_hash=NULL WHERE id=$1", [ctx.params.id]); pinNote = " (ลบ PIN)"; }
   else if (ctx.body.pin) { await pool.query("UPDATE employees SET pin_hash=$1 WHERE id=$2", [hashPw(checkPin(ctx.body.pin)), ctx.params.id]); pinNote = " (ตั้ง PIN ใหม่)"; }
   await logActivity(ctx, "employee_edit", "แก้ไขข้อมูลพนักงาน " + f.name + pinNote, ctx.branch.id);
@@ -1678,6 +1761,49 @@ route("DELETE", B + "/employees/:id", async ctx => {
   return { ok: true };
 });
 
+// รูปโปรไฟล์พนักงาน (ทุกเมนูที่เห็นรายชื่อพนักงานดูรูปได้)
+route("GET", B + "/employees/:id/photo", async (ctx, req, res) => {
+  await needBranch(ctx, ["employees", "payroll", "leave", "advance", "attendance"], "view");
+  const r = (await pool.query("SELECT photo FROM employees WHERE id=$1 AND branch_id=$2", [ctx.params.id, ctx.branch.id])).rows[0];
+  if (!r || !r.photo) throw new HttpError(404, "ไม่พบรูป");
+  sendDataUrl(res, r.photo); return undefined;
+});
+// เอกสารพนักงาน (บัตรประชาชน สัญญาจ้าง ฯลฯ) — ดูได้เฉพาะสิทธิ์พนักงาน/เงินเดือน แก้ไขได้เฉพาะสิทธิ์พนักงาน (แก้ไข)
+route("GET", B + "/employees/:id/files", async ctx => {
+  await needBranch(ctx, ["employees", "payroll"], "view");
+  const { rows } = await pool.query("SELECT id, doc_type, filename, mime, size, created_by, created_at FROM emp_files WHERE employee_id=$1 AND branch_id=$2 ORDER BY created_at DESC", [ctx.params.id, ctx.branch.id]);
+  return { files: rows.map(f => ({ id: f.id, docType: f.doc_type || "", filename: f.filename, mime: f.mime, size: Number(f.size) || 0, createdBy: f.created_by || "", createdAt: Number(f.created_at) })) };
+});
+route("POST", B + "/employees/:id/files", async ctx => {
+  await needBranch(ctx, "employees", "edit");
+  const e = (await pool.query("SELECT id, name FROM employees WHERE id=$1 AND branch_id=$2", [ctx.params.id, ctx.branch.id])).rows[0];
+  if (!e) throw new HttpError(404, "ไม่พบพนักงาน");
+  const mime = str(ctx.body.mime, 100), data = String(ctx.body.data || "");
+  if (!/^(image\/(png|jpeg|webp|gif|heic)|application\/pdf)$/.test(mime)) throw bad("แนบได้เฉพาะรูปภาพหรือ PDF");
+  if (!/^[A-Za-z0-9+/=]+$/.test(data)) throw bad("ไฟล์ไม่ถูกต้อง");
+  const size = Math.floor(data.length * 3 / 4); if (size > 8 * 1024 * 1024) throw bad("ไฟล์ใหญ่เกิน 8MB");
+  const cnt = await pool.query("SELECT COUNT(*)::int AS c FROM emp_files WHERE employee_id=$1", [e.id]);
+  if (Number(cnt.rows[0].c) >= 30) throw bad("แนบเอกสารได้สูงสุด 30 ไฟล์ต่อพนักงาน");
+  const id = uid(), docType = str(ctx.body.docType, 60) || "อื่นๆ";
+  await pool.query("INSERT INTO emp_files (id,branch_id,employee_id,doc_type,filename,mime,size,data,created_by,created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)",
+    [id, ctx.branch.id, e.id, docType, str(ctx.body.filename, 200) || "file", mime, size, data, ctx.session.actor, now()]);
+  await logActivity(ctx, "employee_file_add", "แนบเอกสาร " + docType + " ของ " + e.name, ctx.branch.id);
+  return { ok: true, id };
+});
+route("GET", B + "/emp-files/:fid", async (ctx, req, res) => {
+  await needBranch(ctx, ["employees", "payroll"], "view");
+  const f = (await pool.query("SELECT * FROM emp_files WHERE id=$1 AND branch_id=$2", [ctx.params.fid, ctx.branch.id])).rows[0];
+  if (!f) throw new HttpError(404, "ไม่พบไฟล์");
+  const buf = Buffer.from(f.data, "base64");
+  res.writeHead(200, { "Content-Type": f.mime, "Content-Length": buf.length, "Cache-Control": "private, max-age=3600", "Content-Disposition": "inline; filename*=UTF-8''" + encodeURIComponent(f.filename || "file"), "X-Content-Type-Options": "nosniff" });
+  res.end(buf); return undefined;
+});
+route("DELETE", B + "/emp-files/:fid", async ctx => {
+  await needBranch(ctx, "employees", "edit");
+  const { rows } = await pool.query("DELETE FROM emp_files WHERE id=$1 AND branch_id=$2 RETURNING doc_type, employee_id", [ctx.params.fid, ctx.branch.id]);
+  if (rows[0]) await logActivity(ctx, "employee_file_delete", "ลบเอกสาร " + rows[0].doc_type + " ของพนักงาน", ctx.branch.id);
+  return { ok: true };
+});
 function ssoOf(wage, st, enabled) {
   if (!enabled) return 0;
   const base = Math.min(Math.max(wage, num(st.sso_min, 1650)), num(st.sso_max, 17500));
@@ -2054,7 +2180,7 @@ route("GET", "/api/checkin/:bid", async ctx => {
   if (!b) throw new HttpError(404, "ไม่พบสาขา");
   const s = await getSettings();
   const emps = b.checkin_enabled ? (await pool.query("SELECT id, name, nickname, pin_hash FROM employees WHERE branch_id=$1 AND active=TRUE ORDER BY code, name", [b.id])).rows : [];
-  return { branch: { id: b.id, name: b.name, color: b.color, code: b.code }, company: { name: s.company_name, logo: s.company_logo }, enabled: !!b.checkin_enabled,
+  return { branch: { id: b.id, name: b.name, color: b.color, code: b.code, logo: b.logo || "" }, company: { name: s.company_name, logo: s.company_logo }, enabled: !!b.checkin_enabled,
     radius: Number(b.checkin_radius) || 100, workStart: b.work_start || "09:00", lateGrace: Number(b.late_grace) || 0,
     employees: emps.map(e => ({ id: e.id, name: e.name, nickname: e.nickname || "", hasPin: !!e.pin_hash })) };
 });
