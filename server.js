@@ -13,7 +13,7 @@ const crypto = require("crypto");
 const { Pool } = require("pg");
 
 const PORT = Number(process.env.PORT) || 3000;
-const BUILD_ID = "2.6.0";
+const BUILD_ID = "2.7.0";
 const INIT_ADMIN_USER = String(process.env.ADMIN_USER || "admin").trim();
 const INIT_ADMIN_PASS = String(process.env.ADMIN_PASS || "admin1234");
 const PUBLIC_DIR = path.join(__dirname, "public");
@@ -252,6 +252,13 @@ async function initDb() {
     CREATE TABLE IF NOT EXISTS emp_files (
       id TEXT PRIMARY KEY, branch_id TEXT NOT NULL, employee_id TEXT NOT NULL, doc_type TEXT, filename TEXT, mime TEXT, size INT, data TEXT, created_by TEXT, created_at BIGINT);
     CREATE INDEX IF NOT EXISTS idx_emp_files_emp ON emp_files(employee_id);
+    ALTER TABLE stock_items ADD COLUMN IF NOT EXISTS units TEXT;
+    ALTER TABLE stock_moves ADD COLUMN IF NOT EXISTS in_unit TEXT, ADD COLUMN IF NOT EXISTS in_qty NUMERIC, ADD COLUMN IF NOT EXISTS in_price NUMERIC;
+    CREATE TABLE IF NOT EXISTS shop_items (
+      id TEXT PRIMARY KEY, branch_id TEXT NOT NULL, item_id TEXT, name TEXT NOT NULL, category TEXT, qty NUMERIC, unit TEXT, note TEXT,
+      status TEXT NOT NULL DEFAULT 'open', bought_qty NUMERIC, bought_unit TEXT, bought_price NUMERIC, move_id TEXT, pending BOOLEAN DEFAULT FALSE,
+      created_by TEXT, created_at BIGINT, bought_by TEXT, bought_at BIGINT);
+    CREATE INDEX IF NOT EXISTS idx_shop_branch ON shop_items(branch_id, status);
   `);
   const a = await pool.query("SELECT COUNT(*)::int AS c FROM admins");
   if (Number(a.rows[0].c) === 0) {
@@ -737,7 +744,7 @@ route("DELETE", "/api/admin/branches/:id", async ctx => {
   if (!verifyPw(String(ctx.body.adminPassword || ""), me.rows[0].pass_hash)) throw bad("รหัสผ่านผู้ดูแลไม่ถูกต้อง");
   if (str(ctx.body.confirmName, 200) !== rows[0].name) throw bad("พิมพ์ชื่อสาขาให้ตรงเพื่อยืนยันการลบ");
   const id = rows[0].id;
-  for (const t of ["files", "records", "lists", "stock_moves", "stock_items", "payroll_items", "payroll_runs", "employees", "doc_counters", "sessions", "transfers", "leaves", "advances", "attendance", "card_plans", "emp_files"]) {
+  for (const t of ["files", "records", "lists", "stock_moves", "stock_items", "payroll_items", "payroll_runs", "employees", "doc_counters", "sessions", "transfers", "leaves", "advances", "attendance", "card_plans", "emp_files", "shop_items"]) {
     await pool.query("DELETE FROM " + t + " WHERE branch_id=$1", [id]);
   }
   await pool.query("DELETE FROM branches WHERE id=$1", [id]);
@@ -795,7 +802,7 @@ route("GET", "/api/admin/backup", async ctx => {
   needAdmin(ctx);
   const withFiles = ctx.query.files === "1";
   const out = { app: "restaurant-accounting", build: BUILD_ID, exportedAt: new Date().toISOString(), tables: {} };
-  for (const t of ["settings", "admins", "users", "branches", "lists", "records", "doc_counters", "stock_items", "stock_moves", "employees", "payroll_runs", "payroll_items", "transfers", "leaves", "advances", "attendance", "card_plans", "activity", "emp_files", "files"]) {
+  for (const t of ["settings", "admins", "users", "branches", "lists", "records", "doc_counters", "stock_items", "stock_moves", "employees", "payroll_runs", "payroll_items", "transfers", "leaves", "advances", "attendance", "card_plans", "activity", "emp_files", "shop_items", "files"]) {
     if (t === "emp_files" && !withFiles) { out.tables.emp_files = (await pool.query("SELECT id, branch_id, employee_id, doc_type, filename, mime, size, created_at FROM emp_files")).rows; continue; }
     if (t === "files" && !withFiles) { out.tables.files = (await pool.query("SELECT id, record_id, branch_id, filename, mime, size, created_at FROM files")).rows; continue; }
     out.tables[t] = (await pool.query("SELECT * FROM " + t)).rows;
@@ -1000,8 +1007,8 @@ route("POST", "/api/admin/lists/copy", async ctx => {
       for (const it of items) {
         const ex = await pool.query("SELECT 1 FROM stock_items WHERE branch_id=$1 AND lower(name)=lower($2)", [tid, it.name]);
         if (ex.rows.length) continue;
-        await pool.query("INSERT INTO stock_items (id,branch_id,sku,name,category,unit,min_qty,qty,avg_cost,active,note,photo,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,0,0,TRUE,$8,$9,$10,$10)",
-          [uid(), tid, it.sku, it.name, it.category, it.unit, it.min_qty, it.note, it.photo || null, now()]);
+        await pool.query("INSERT INTO stock_items (id,branch_id,sku,name,category,unit,min_qty,qty,avg_cost,active,note,photo,units,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,0,0,TRUE,$8,$9,$10,$11,$11)",
+          [uid(), tid, it.sku, it.name, it.category, it.unit, it.min_qty, it.note, it.photo || null, it.units || null, now()]);
         res.stockAdded++;
       }
     }
@@ -1044,12 +1051,12 @@ route("POST", "/api/admin/stock/copy", async ctx => {
       const ex = (await pool.query("SELECT id FROM stock_items WHERE branch_id=$1 AND lower(name)=lower($2)", [tid, it.name])).rows[0];
       if (ex) {
         if (!update) { res.skipped++; continue; }
-        await pool.query("UPDATE stock_items SET sku=$1, category=$2, unit=$3, min_qty=$4, note=$5, updated_at=$6 WHERE id=$7", [it.sku, it.category, it.unit, it.min_qty, it.note, now(), ex.id]);
+        await pool.query("UPDATE stock_items SET sku=$1, category=$2, unit=$3, min_qty=$4, note=$5, units=$6, updated_at=$7 WHERE id=$8", [it.sku, it.category, it.unit, it.min_qty, it.note, it.units, now(), ex.id]);
         if (withPhoto && it.photo) await pool.query("UPDATE stock_items SET photo=$1 WHERE id=$2", [it.photo, ex.id]);
         res.updated++; continue;
       }
-      await pool.query("INSERT INTO stock_items (id,branch_id,sku,name,category,unit,min_qty,qty,avg_cost,active,note,photo,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,0,0,TRUE,$8,$9,$10,$10)",
-        [uid(), tid, it.sku, it.name, it.category, it.unit, it.min_qty, it.note, withPhoto ? (it.photo || null) : null, now()]);
+      await pool.query("INSERT INTO stock_items (id,branch_id,sku,name,category,unit,min_qty,qty,avg_cost,active,note,photo,units,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,0,0,TRUE,$8,$9,$10,$11,$11)",
+        [uid(), tid, it.sku, it.name, it.category, it.unit, it.min_qty, it.note, withPhoto ? (it.photo || null) : null, it.units || null, now()]);
       res.added++;
     }
     result.push(res);
@@ -1154,12 +1161,15 @@ async function applyRecordStock(ctx, recId, rec) {
     const ratio = rec.subtotal > 0 ? (rec.subtotal - rec.discount) / rec.subtotal : 1;
     for (const it of rec.items) {
       if (!it.stockItemId) continue;
-      const si = await pool.query("SELECT id FROM stock_items WHERE id=$1 AND branch_id=$2", [it.stockItemId, ctx.branch.id]);
+      const si = await pool.query("SELECT * FROM stock_items WHERE id=$1 AND branch_id=$2", [it.stockItemId, ctx.branch.id]);
       if (!si.rows[0]) continue;
       const amount = r2(it.amount * ratio);
-      await pool.query(`INSERT INTO stock_moves (id,branch_id,item_id,move_date,kind,qty,unit_cost,amount,note,ref_record_id,created_by,created_at)
-        VALUES ($1,$2,$3,$4,'in',$5,$6,$7,$8,$9,$10,$11)`,
-        [uid(), ctx.branch.id, it.stockItemId, rec.date, it.qty, r4(amount / it.qty), amount, "ซื้อเข้า " + (rec.docNo || ""), recId, ctx.session.actor, now()]);
+      const uf = unitFactor(si.rows[0], it.unit, false); // หน่วยในบรรทัดตรงกับหน่วยอื่นของสินค้า (เช่น ถุง) → แปลงเป็นหน่วยหลัก
+      const bq = r4(it.qty * uf.f);
+      await pool.query(`INSERT INTO stock_moves (id,branch_id,item_id,move_date,kind,qty,unit_cost,amount,note,ref_record_id,created_by,created_at,in_unit,in_qty,in_price)
+        VALUES ($1,$2,$3,$4,'in',$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+        [uid(), ctx.branch.id, it.stockItemId, rec.date, bq, r4(amount / bq), amount, "ซื้อเข้า " + (rec.docNo || ""), recId, ctx.session.actor, now(),
+          uf.f !== 1 ? uf.unit : null, uf.f !== 1 ? it.qty : null, uf.f !== 1 ? r4(amount / it.qty) : null]);
       touched.add(it.stockItemId);
     }
   }
@@ -1473,6 +1483,30 @@ route("DELETE", B + "/transfers/:id", async ctx => {
 
 /* ================= สต็อกสินค้า ================= */
 // คำนวณยอดคงเหลือ + ต้นทุนเฉลี่ยถ่วงน้ำหนักใหม่ทั้งหมดของสินค้า 1 ตัว (รองรับการแก้ไข/ลบย้อนหลัง)
+/* หน่วยนับหลายหน่วย (v2.7): สต็อกเก็บเป็น "หน่วยหลัก" เสมอ · หน่วยอื่น = [{n:"ถุง", f:2}] หมายถึง 1 ถุง = 2 หน่วยหลัก */
+function parseUnits(v) { try { const a = typeof v === "string" ? JSON.parse(v || "[]") : v; return Array.isArray(a) ? a.filter(u => u && u.n && Number(u.f) > 0).map(u => ({ n: String(u.n), f: Number(u.f) })) : []; } catch (e) { return []; } }
+function cleanUnits(v, base) {
+  const out = [];
+  for (const u of (Array.isArray(v) ? v : []).slice(0, 8)) {
+    const n = str(u && (u.n || u.name), 30), f = r4(num(u && (u.f || u.factor), 0));
+    if (!n && !f) continue;
+    if (!n) throw bad("กรุณาใส่ชื่อหน่วยอื่น");
+    if (!(f > 0)) throw bad("หน่วย \"" + n + "\" ต้องระบุว่าเท่ากับกี่ " + (base || "หน่วยหลัก") + " (มากกว่า 0)");
+    if (base && n.toLowerCase() === base.toLowerCase()) throw bad("หน่วย \"" + n + "\" ซ้ำกับหน่วยหลัก");
+    if (out.some(x => x.n.toLowerCase() === n.toLowerCase())) throw bad("หน่วย \"" + n + "\" ซ้ำ");
+    out.push({ n, f });
+  }
+  return out;
+}
+// คืนค่าตัวคูณของหน่วยที่เลือก (หน่วยหลัก/ไม่ระบุ = 1) — ถ้าเป็นหน่วยที่ไม่รู้จักและ strict ให้ error
+function unitFactor(item, unit, strict) {
+  const u = String(unit || "").trim();
+  if (!u || u === (item.unit || "")) return { f: 1, unit: item.unit || "" };
+  const x = parseUnits(item.units).find(y => y.n.toLowerCase() === u.toLowerCase());
+  if (x) return { f: x.f, unit: x.n };
+  if (strict) throw bad("สินค้า \"" + item.name + "\" ไม่มีหน่วย \"" + u + "\" — ตั้งหน่วยได้ที่แก้ไขสินค้า");
+  return { f: 1, unit: item.unit || "" };
+}
 async function recomputeItem(itemId) {
   // นับเฉพาะรายการที่อนุมัติแล้ว — รายการ "รออนุมัติ" / "ไม่อนุมัติ" ยังไม่กระทบยอด
   const { rows } = await pool.query("SELECT * FROM stock_moves WHERE item_id=$1 AND status='approved' ORDER BY move_date ASC, created_at ASC, id ASC", [itemId]);
@@ -1509,11 +1543,11 @@ function itemOut(r) {
   const qty = Number(r.qty), min = Number(r.min_qty), avg = Number(r.avg_cost);
   return { id: r.id, sku: r.sku || "", name: r.name, category: r.category || "", unit: r.unit || "", minQty: min, qty, avgCost: avg, value: r2(qty * avg),
     active: r.active, note: r.note || "", low: min > 0 && qty <= min, photoV: r.has_photo ? Number(r.updated_at) || 1 : 0, moveCount: r.move_count != null ? Number(r.move_count) : undefined, lastMove: r.last_move || "",
-    pending: Number(r.pending_count) || 0 };
+    pending: Number(r.pending_count) || 0, units: parseUnits(r.units) };
 }
 route("GET", B + "/stock/items", async ctx => {
   await needBranch(ctx, ["stock", "expense", "invest"], "view");
-  const { rows } = await pool.query(`SELECT i.id, i.branch_id, i.sku, i.name, i.category, i.unit, i.min_qty, i.qty, i.avg_cost, i.active, i.note, i.created_at, i.updated_at, (i.photo IS NOT NULL AND i.photo<>'') AS has_photo,
+  const { rows } = await pool.query(`SELECT i.id, i.branch_id, i.sku, i.name, i.category, i.unit, i.min_qty, i.qty, i.avg_cost, i.active, i.note, i.created_at, i.updated_at, i.units, (i.photo IS NOT NULL AND i.photo<>'') AS has_photo,
     (SELECT COUNT(*) FROM stock_moves m WHERE m.item_id=i.id)::int AS move_count,
     (SELECT COUNT(*) FROM stock_moves m WHERE m.item_id=i.id AND m.status='pending')::int AS pending_count,
     (SELECT MAX(move_date) FROM stock_moves m WHERE m.item_id=i.id) AS last_move FROM stock_items i WHERE i.branch_id=$1 ORDER BY i.active DESC, i.category, i.name`, [ctx.branch.id]);
@@ -1522,7 +1556,8 @@ route("GET", B + "/stock/items", async ctx => {
 function stockItemFields(b) {
   const name = str(b.name, 150); if (!name) throw bad("กรุณาใส่ชื่อสินค้า");
   const minQty = num(b.minQty, 0); if (minQty < 0) throw bad("จุดสั่งซื้อต้องไม่ติดลบ");
-  return { name, sku: str(b.sku, 50), category: str(b.category, 120), unit: str(b.unit, 30), minQty: r4(minQty), note: str(b.note, 500) };
+  const unit = str(b.unit, 30);
+  return { name, sku: str(b.sku, 50), category: str(b.category, 120), unit, minQty: r4(minQty), note: str(b.note, 500), units: b.units === undefined ? undefined : JSON.stringify(cleanUnits(b.units, unit)) };
 }
 route("POST", B + "/stock/items", async ctx => {
   await needBranch(ctx, "stock", "edit");
@@ -1533,6 +1568,7 @@ route("POST", B + "/stock/items", async ctx => {
   await pool.query("INSERT INTO stock_items (id,branch_id,sku,name,category,unit,min_qty,qty,avg_cost,active,note,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,0,0,TRUE,$8,$9,$9)",
     [id, ctx.branch.id, f.sku, f.name, f.category, f.unit, f.minQty, f.note, now()]);
   if (ctx.body.photo) await pool.query("UPDATE stock_items SET photo=$1 WHERE id=$2", [checkImg(ctx.body.photo, 400000), id]);
+  if (f.units !== undefined) await pool.query("UPDATE stock_items SET units=$1 WHERE id=$2", [f.units, id]);
   const openQty = num(ctx.body.openingQty, 0), openCost = num(ctx.body.openingCost, 0);
   let pending = false;
   if (openQty > 0) {
@@ -1559,6 +1595,7 @@ route("PUT", B + "/stock/items/:id", async ctx => {
   if (dup.rows.length) throw bad("มีสินค้าชื่อนี้อยู่แล้ว");
   await pool.query("UPDATE stock_items SET sku=$1,name=$2,category=$3,unit=$4,min_qty=$5,note=$6,updated_at=$7 WHERE id=$8", [f.sku, f.name, f.category, f.unit, f.minQty, f.note, now(), ctx.params.id]);
   if (ctx.body.photo !== undefined) await pool.query("UPDATE stock_items SET photo=$1 WHERE id=$2", [checkImg(ctx.body.photo, 400000) || null, ctx.params.id]);
+  if (f.units !== undefined) await pool.query("UPDATE stock_items SET units=$1 WHERE id=$2", [f.units, ctx.params.id]);
   await logActivity(ctx, "stock_item_edit", "แก้ไขสินค้า " + f.name, ctx.branch.id);
   return { ok: true };
 });
@@ -1595,6 +1632,7 @@ function moveOut(m, ctx) {
     counted: m.counted == null ? null : Number(m.counted), unitCost: Number(m.unit_cost) || 0, amount: Number(m.amount) || 0, balance: Number(m.balance) || 0,
     note: m.note || "", refRecordId: m.ref_record_id || "", docNo: m.doc_no || "", batchId: m.batch_id || "", createdBy: m.created_by || "", createdAt: Number(m.created_at),
     status: m.status || "approved", approvedBy: m.approved_by || "", approvedAt: Number(m.approved_at) || null, rejectReason: m.reject_reason || "", itemQty: m.item_qty == null ? null : Number(m.item_qty),
+    inUnit: m.in_unit || "", inQty: m.in_qty == null ? null : Number(m.in_qty), inPrice: m.in_price == null ? null : Number(m.in_price),
     canEdit: ctx ? moveEditable(ctx, m) : false };
 }
 route("GET", B + "/stock/moves", async ctx => {
@@ -1623,7 +1661,9 @@ route("PUT", B + "/stock/moves/:id", async ctx => {
   if (!m) throw new HttpError(404, "ไม่พบรายการ");
   if (m.ref_record_id) throw bad("รายการนี้มาจากเอกสารซื้อ — แก้ไขที่เอกสารรายจ่ายแทน");
   if (!moveEditable(ctx, m)) throw new HttpError(403, "แก้ไขได้เฉพาะการเบิกของตัวเองภายในวันเดียวกัน (รายการอื่นให้ผู้จัดการแก้)");
-  const q = r4(num(ctx.body.qty, NaN));
+  const it = (await pool.query("SELECT * FROM stock_items WHERE id=$1", [m.item_id])).rows[0];
+  const uf = unitFactor(it, ctx.body.unit !== undefined ? ctx.body.unit : (m.in_unit || ""), true);
+  const qIn = r4(num(ctx.body.qty, NaN)); const q = r4(qIn * uf.f);
   if (m.kind === "count" ? !(q >= 0) : !(q > 0)) throw bad(m.kind === "count" ? "ยอดที่นับได้ต้องเป็น 0 ขึ้นไป" : "จำนวนต้องมากกว่า 0");
   const old = m.kind === "count" ? Number(m.counted) : Math.abs(Number(m.qty));
   if ((m.kind === "out" || m.kind === "waste") && m.status === "approved") {
@@ -1631,42 +1671,53 @@ route("PUT", B + "/stock/moves/:id", async ctx => {
     if (q > avail + 1e-9 && !ctx.body.allowNegative) throw bad("\"" + m.name + "\" คงเหลือ " + r4(avail) + " " + (m.unit || "") + " ไม่พอเบิก " + q);
   }
   const signed = m.kind === "in" ? q : m.kind === "count" ? 0 : -q;
-  await pool.query("UPDATE stock_moves SET qty=$1, counted=$2, note=$3 WHERE id=$4", [signed, m.kind === "count" ? q : null, ctx.body.note !== undefined ? str(ctx.body.note, 300) : m.note, m.id]);
+  await pool.query("UPDATE stock_moves SET qty=$1, counted=$2, note=$3, in_unit=$4, in_qty=$5 WHERE id=$6", [signed, m.kind === "count" ? q : null, ctx.body.note !== undefined ? str(ctx.body.note, 300) : m.note, uf.f !== 1 ? uf.unit : null, uf.f !== 1 ? qIn : null, m.id]);
+  if (m.kind === "in" && uf.f !== 1 && m.in_price != null) await pool.query("UPDATE stock_moves SET unit_cost=$1 WHERE id=$2", [r4(Number(m.in_price) / uf.f), m.id]);
   if (m.status === "approved") await recomputeItem(m.item_id);
   await logActivity(ctx, "stock_move_edit", "แก้ไข" + MOVE_KINDS[m.kind] + " " + m.name + " จาก " + old + " เป็น " + q + " " + (m.unit || "") + " (รายการวันที่ " + m.move_date + ")", ctx.branch.id);
   return { ok: true };
 });
+// สร้างการเคลื่อนไหวสต็อกหลายบรรทัด — ใช้ร่วมกันระหว่างหน้าสต็อก และ "รายการที่จะซื้อ"
+// line = { itemId, qty, unit?, unitCost? }  qty/unitCost เป็นของ "หน่วยที่เลือก" ระบบแปลงเป็นหน่วยหลักให้
+async function createStockMoves(ctx, kind, date, note, rawLines, allowNegative) {
+  if (!MOVE_KINDS[kind]) throw bad("ประเภทการเคลื่อนไหวไม่ถูกต้อง");
+  const lines = (Array.isArray(rawLines) ? rawLines : []).filter(l => l && l.itemId).slice(0, 200);
+  if (!lines.length) throw bad("กรุณาเลือกสินค้าอย่างน้อย 1 รายการ");
+  const batch = uid();
+  // เบิกใช้ = ตัดยอดทันที ไม่ต้องอนุมัติ · รับเข้า / ของเสีย / ตรวจนับ ของคนที่ไม่มีสิทธิ์อนุมัติ = รออนุมัติ
+  const approver = !!ctx.perms.approve.stock || kind === "out";
+  const prep = [], need = {};
+  for (const l of lines) {
+    const it = (await pool.query("SELECT * FROM stock_items WHERE id=$1 AND branch_id=$2", [l.itemId, ctx.branch.id])).rows[0];
+    if (!it) throw bad("ไม่พบสินค้า");
+    const uf = unitFactor(it, l.unit, true);
+    const qIn = num(l.qty, NaN);
+    if (kind === "count") { if (!isFinite(qIn) || qIn < 0) throw bad("ยอดที่นับได้ต้องเป็น 0 ขึ้นไป (" + it.name + ")"); }
+    else if (!isFinite(qIn) || qIn <= 0) throw bad("จำนวนต้องมากกว่า 0 (" + it.name + ")");
+    const q = r4(qIn * uf.f);
+    const price = kind === "in" ? Math.max(0, num(l.unitCost, 0)) : null;
+    if (kind === "out" || kind === "waste") {
+      need[it.id] = (need[it.id] || 0) + q;
+      if (need[it.id] > Number(it.qty) + 1e-9 && !allowNegative) throw bad("\"" + it.name + "\" คงเหลือ " + r4(Number(it.qty)) + " " + (it.unit || "") + " ไม่พอ" + (kind === "out" ? "เบิก " : " ") + r4(need[it.id]) + " " + (it.unit || ""));
+    }
+    prep.push({ it, uf, qIn: r4(qIn), q, price });
+  }
+  const ids = [];
+  for (const p of prep) {
+    const signed = kind === "in" ? p.q : (kind === "count" ? 0 : -p.q), id = uid(); ids.push(id);
+    await pool.query(`INSERT INTO stock_moves (id,branch_id,item_id,move_date,kind,qty,counted,unit_cost,note,batch_id,created_by,created_at,status,approved_by,approved_at,in_unit,in_qty,in_price) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
+      [id, ctx.branch.id, p.it.id, date, kind, signed, kind === "count" ? p.q : null, kind === "in" ? r4(p.price / p.uf.f) : null, note, batch, ctx.session.actor, now(),
+        approver ? "approved" : "pending", approver ? ctx.session.actor : null, approver ? now() : null, p.uf.f !== 1 ? p.uf.unit : null, p.uf.f !== 1 ? p.qIn : null, kind === "in" ? r4(p.price) : null]);
+  }
+  if (approver) for (const id of new Set(prep.map(p => p.it.id))) await recomputeItem(id);
+  const qtxt = p => p.qIn + " " + (p.uf.f !== 1 ? p.uf.unit + " (=" + p.q + " " + (p.it.unit || "") + ")" : (p.it.unit || ""));
+  await logActivity(ctx, "stock_move", MOVE_KINDS[kind] + " " + prep.length + " รายการ: " + prep.slice(0, 5).map(p => p.it.name + " " + qtxt(p)).join(", ") + (approver ? "" : " (รออนุมัติ)"), ctx.branch.id);
+  return { ok: true, pending: !approver, ids, batch };
+}
 route("POST", B + "/stock/moves", async ctx => {
   await needBranch(ctx, "stock", "edit");
   const b = ctx.body || {};
-  const kind = b.kind; if (!MOVE_KINDS[kind]) throw bad("ประเภทการเคลื่อนไหวไม่ถูกต้อง");
-  const date = isDate(b.date) ? b.date : todayBkk();
-  const lines = (Array.isArray(b.lines) ? b.lines : []).filter(l => l && l.itemId).slice(0, 200);
-  if (!lines.length) throw bad("กรุณาเลือกสินค้าอย่างน้อย 1 รายการ");
-  const batch = uid(); const note = str(b.note, 300);
-  // เบิกใช้ = ตัดยอดทันที ไม่ต้องอนุมัติ · รับเข้า / ของเสีย / ตรวจนับ ของคนที่ไม่มีสิทธิ์อนุมัติ = รออนุมัติ
-  const approver = !!ctx.perms.approve.stock || kind === "out";
-  const items = {};
-  for (const l of lines) {
-    const it = await pool.query("SELECT * FROM stock_items WHERE id=$1 AND branch_id=$2", [l.itemId, ctx.branch.id]);
-    if (!it.rows[0]) throw bad("ไม่พบสินค้า");
-    items[l.itemId] = it.rows[0];
-    const q = num(l.qty, NaN);
-    if (kind === "count") { if (!isFinite(q) || q < 0) throw bad("ยอดที่นับได้ต้องเป็น 0 ขึ้นไป (" + it.rows[0].name + ")"); }
-    else if (!isFinite(q) || q <= 0) throw bad("จำนวนต้องมากกว่า 0 (" + it.rows[0].name + ")");
-    if ((kind === "out" || kind === "waste") && q > Number(it.rows[0].qty) + 1e-9 && !b.allowNegative)
-      throw bad("\"" + it.rows[0].name + "\" คงเหลือ " + Number(it.rows[0].qty) + " " + (it.rows[0].unit || "") + " ไม่พอเบิก " + q);
-  }
-  for (const l of lines) {
-    const q = r4(num(l.qty, 0));
-    const signed = kind === "in" ? q : (kind === "count" ? 0 : -q);
-    await pool.query(`INSERT INTO stock_moves (id,branch_id,item_id,move_date,kind,qty,counted,unit_cost,note,batch_id,created_by,created_at,status,approved_by,approved_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
-      [uid(), ctx.branch.id, l.itemId, date, kind, signed, kind === "count" ? q : null, kind === "in" ? r4(Math.max(0, num(l.unitCost, 0))) : null, note, batch, ctx.session.actor, now(),
-        approver ? "approved" : "pending", approver ? ctx.session.actor : null, approver ? now() : null]);
-    if (approver) await recomputeItem(l.itemId);
-  }
-  await logActivity(ctx, "stock_move", MOVE_KINDS[kind] + " " + lines.length + " รายการ: " + lines.map(l => items[l.itemId].name + " " + l.qty).slice(0, 5).join(", ") + (approver ? "" : " (รออนุมัติ)"), ctx.branch.id);
-  return { ok: true, pending: !approver };
+  return await createStockMoves(ctx, b.kind, isDate(b.date) ? b.date : todayBkk(), str(b.note, 300), b.lines, !!b.allowNegative);
 });
 // อนุมัติ / ไม่อนุมัติ รายการสต็อก (ทีละหลายรายการได้)
 route("POST", B + "/stock/moves/approve", async ctx => {
@@ -1695,6 +1746,104 @@ route("DELETE", B + "/stock/moves/:id", async ctx => {
   await recomputeItem(rows[0].item_id);
   await logActivity(ctx, "stock_move_delete", "ลบรายการสต็อก " + MOVE_KINDS[rows[0].kind] + " " + rows[0].name + (rows[0].status !== "approved" ? " (" + (rows[0].status === "pending" ? "รออนุมัติ" : "ไม่อนุมัติ") + ")" : ""), ctx.branch.id);
   return { ok: true };
+});
+
+/* ================= รายการที่จะซื้อ (Check List) — v2.7 ================= */
+function shopOut(r, ctx) {
+  return { id: r.id, itemId: r.item_id || "", name: r.name, category: r.category || "", qty: r.qty == null ? null : Number(r.qty), unit: r.unit || "", note: r.note || "",
+    status: r.status, boughtQty: r.bought_qty == null ? null : Number(r.bought_qty), boughtUnit: r.bought_unit || "", boughtPrice: r.bought_price == null ? null : Number(r.bought_price),
+    moveId: r.move_id || "", pending: !!r.pending, moveStatus: r.move_status || "", createdBy: r.created_by || "", createdAt: Number(r.created_at), boughtBy: r.bought_by || "", boughtAt: Number(r.bought_at) || null,
+    canUndo: r.status === "bought" && (!!ctx.perms.approve.stock || (r.bought_by === ctx.session.actor && (r.move_status === "pending" || !r.move_id || bkkDateOf(Number(r.bought_at)) === todayBkk()))) };
+}
+route("GET", B + "/shopping", async ctx => {
+  await needBranch(ctx, "stock", "view");
+  const since = now() - 3 * 86400000;
+  const { rows } = await pool.query(`SELECT s.*, m.status AS move_status FROM shop_items s LEFT JOIN stock_moves m ON m.id=s.move_id
+    WHERE s.branch_id=$1 AND (s.status='open' OR (s.status='bought' AND s.bought_at>=$2)) ORDER BY s.status, s.category, s.created_at`, [ctx.branch.id, since]);
+  // ของใกล้หมด (คงเหลือ ≤ จุดสั่งซื้อ) ที่ยังไม่อยู่ในลิสต์ → แสดงเป็นรายการอัตโนมัติ
+  const low = (await pool.query(`SELECT id, name, category, unit, units, qty, min_qty, avg_cost FROM stock_items i WHERE branch_id=$1 AND active=TRUE AND min_qty>0 AND qty<=min_qty
+    AND NOT EXISTS (SELECT 1 FROM shop_items s WHERE s.item_id=i.id AND s.status='open') ORDER BY category, name`, [ctx.branch.id])).rows;
+  return { items: rows.map(r => shopOut(r, ctx)), suggest: low.map(i => ({ itemId: i.id, name: i.name, category: i.category || "", unit: i.unit || "", qty: Number(i.qty), minQty: Number(i.min_qty), avgCost: Number(i.avg_cost), units: parseUnits(i.units) })),
+    canApprove: !!ctx.perms.approve.stock };
+});
+route("POST", B + "/shopping", async ctx => {
+  await needBranch(ctx, "stock", "edit");
+  const b = ctx.body || {}; let name = str(b.name, 150), category = str(b.category, 120), unit = str(b.unit, 30), itemId = null;
+  if (b.itemId) {
+    const it = (await pool.query("SELECT * FROM stock_items WHERE id=$1 AND branch_id=$2", [b.itemId, ctx.branch.id])).rows[0];
+    if (!it) throw bad("ไม่พบสินค้า");
+    const dup = await pool.query("SELECT 1 FROM shop_items WHERE item_id=$1 AND status='open'", [it.id]);
+    if (dup.rows.length) throw bad("\"" + it.name + "\" อยู่ในรายการที่จะซื้อแล้ว");
+    itemId = it.id; name = it.name; category = it.category || ""; unit = unit ? unitFactor(it, unit, true).unit : (it.unit || "");
+  }
+  if (!name) throw bad("กรุณาใส่ชื่อของที่จะซื้อ");
+  const q = b.qty === "" || b.qty == null ? null : num(b.qty, NaN); if (q != null && !(q > 0)) throw bad("จำนวนต้องมากกว่า 0");
+  const id = uid();
+  await pool.query("INSERT INTO shop_items (id,branch_id,item_id,name,category,qty,unit,note,status,created_by,created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'open',$9,$10)",
+    [id, ctx.branch.id, itemId, name, category, q == null ? null : r4(q), unit, str(b.note, 300), ctx.session.actor, now()]);
+  await logActivity(ctx, "shop_add", "เพิ่มรายการที่จะซื้อ: " + name + (q ? " " + q + " " + unit : ""), ctx.branch.id);
+  return { ok: true, id };
+});
+route("PUT", B + "/shopping/:id", async ctx => {
+  await needBranch(ctx, "stock", "edit");
+  const r = (await pool.query("SELECT * FROM shop_items WHERE id=$1 AND branch_id=$2", [ctx.params.id, ctx.branch.id])).rows[0];
+  if (!r) throw new HttpError(404, "ไม่พบรายการ"); if (r.status !== "open") throw bad("รายการนี้ซื้อแล้ว");
+  const b = ctx.body || {}; const q = b.qty === "" || b.qty == null ? null : num(b.qty, NaN); if (q != null && !(q > 0)) throw bad("จำนวนต้องมากกว่า 0");
+  await pool.query("UPDATE shop_items SET qty=$1, unit=$2, note=$3, name=CASE WHEN item_id IS NULL AND $4<>'' THEN $4 ELSE name END, category=CASE WHEN item_id IS NULL THEN $5 ELSE category END WHERE id=$6",
+    [q == null ? null : r4(q), str(b.unit, 30) || r.unit, b.note !== undefined ? str(b.note, 300) : r.note, str(b.name, 150), b.category !== undefined ? str(b.category, 120) : r.category, r.id]);
+  return { ok: true };
+});
+route("DELETE", B + "/shopping/:id", async ctx => {
+  await needBranch(ctx, "stock", "edit");
+  const r = (await pool.query("SELECT * FROM shop_items WHERE id=$1 AND branch_id=$2", [ctx.params.id, ctx.branch.id])).rows[0];
+  if (!r) throw new HttpError(404, "ไม่พบรายการ");
+  if (r.status === "bought" && r.move_id) throw bad("รายการนี้รับเข้าสต็อกแล้ว — กด “ยกเลิกซื้อแล้ว” ก่อน");
+  await pool.query("DELETE FROM shop_items WHERE id=$1", [r.id]);
+  await logActivity(ctx, "shop_delete", "ลบรายการที่จะซื้อ: " + r.name, ctx.branch.id);
+  return { ok: true };
+});
+// ติ๊ก "ซื้อแล้ว": ใส่จำนวน + หน่วย + ราคาต่อหน่วย → รับเข้าสต็อก (ผู้ไม่มีสิทธิ์อนุมัติ = รออนุมัติ ตามกติกาเดิม)
+route("POST", B + "/shopping/buy", async ctx => {
+  await needBranch(ctx, "stock", "edit");
+  const b = ctx.body || {};
+  let row = null;
+  if (b.id) { row = (await pool.query("SELECT * FROM shop_items WHERE id=$1 AND branch_id=$2", [b.id, ctx.branch.id])).rows[0]; if (!row) throw new HttpError(404, "ไม่พบรายการ"); if (row.status !== "open") throw bad("รายการนี้ติ๊กซื้อแล้ว"); }
+  const itemId = row ? row.item_id : str(b.itemId, 100);
+  const date = isDate(b.date) ? b.date : todayBkk();
+  const qIn = num(b.qty, NaN), price = b.price === "" || b.price == null ? null : num(b.price, NaN);
+  let moveId = null, pending = false, unit = str(b.unit, 30), name = row ? row.name : "", category = row ? row.category : "";
+  if (itemId) {
+    const it = (await pool.query("SELECT * FROM stock_items WHERE id=$1 AND branch_id=$2", [itemId, ctx.branch.id])).rows[0];
+    if (!it) throw bad("ไม่พบสินค้าในสต็อก");
+    if (!(qIn > 0)) throw bad("กรุณาใส่จำนวนที่ซื้อ");
+    if (price != null && !(price >= 0)) throw bad("ราคาไม่ถูกต้อง");
+    unit = unitFactor(it, unit, true).unit; name = it.name; category = it.category || "";
+    const r = await createStockMoves(ctx, "in", date, str(b.note, 300) || "ซื้อตามรายการที่จะซื้อ", [{ itemId, qty: qIn, unit, unitCost: price || 0 }]);
+    moveId = r.ids[0]; pending = r.pending;
+  } else if (!row) throw bad("กรุณาเลือกรายการ");
+  if (row) await pool.query("UPDATE shop_items SET status='bought', bought_qty=$1, bought_unit=$2, bought_price=$3, move_id=$4, pending=$5, bought_by=$6, bought_at=$7 WHERE id=$8",
+    [isFinite(qIn) && qIn > 0 ? r4(qIn) : null, unit || row.unit, price != null && isFinite(price) ? r4(price) : null, moveId, pending, ctx.session.actor, now(), row.id]);
+  else await pool.query("INSERT INTO shop_items (id,branch_id,item_id,name,category,unit,status,bought_qty,bought_unit,bought_price,move_id,pending,created_by,created_at,bought_by,bought_at) VALUES ($1,$2,$3,$4,$5,$6,'bought',$7,$8,$9,$10,$11,$12,$13,$12,$13)",
+    [uid(), ctx.branch.id, itemId, name, category, unit, r4(qIn), unit, price != null ? r4(price) : null, moveId, pending, ctx.session.actor, now()]);
+  await logActivity(ctx, "shop_buy", "ซื้อแล้ว: " + name + (qIn > 0 ? " " + qIn + " " + unit : "") + (price != null ? " @" + price : "") + (moveId ? (pending ? " → รับเข้าสต็อก (รออนุมัติ)" : " → รับเข้าสต็อกแล้ว") : ""), ctx.branch.id);
+  return { ok: true, pending, stocked: !!moveId };
+});
+// ยกเลิก "ซื้อแล้ว" → กลับเป็นรายการที่ต้องซื้อ และลบรายการรับเข้าสต็อกที่สร้างไว้
+route("POST", B + "/shopping/:id/undo", async ctx => {
+  await needBranch(ctx, "stock", "edit");
+  const r = (await pool.query("SELECT s.*, m.status AS move_status FROM shop_items s LEFT JOIN stock_moves m ON m.id=s.move_id WHERE s.id=$1 AND s.branch_id=$2", [ctx.params.id, ctx.branch.id])).rows[0];
+  if (!r) throw new HttpError(404, "ไม่พบรายการ");
+  if (!shopOut(r, ctx).canUndo) throw new HttpError(403, "ยกเลิกได้เฉพาะคนที่ติ๊กเอง (วันเดียวกัน หรือยังรออนุมัติ) หรือผู้อนุมัติสต็อก");
+  if (r.move_id) { const mv = (await pool.query("DELETE FROM stock_moves WHERE id=$1 RETURNING item_id", [r.move_id])).rows[0]; if (mv) await recomputeItem(mv.item_id); }
+  await pool.query("UPDATE shop_items SET status='open', bought_qty=NULL, bought_unit=NULL, bought_price=NULL, move_id=NULL, pending=FALSE, bought_by=NULL, bought_at=NULL WHERE id=$1", [r.id]);
+  await logActivity(ctx, "shop_undo", "ยกเลิกซื้อแล้ว: " + r.name + (r.move_id ? " (ลบรายการรับเข้าสต็อก)" : ""), ctx.branch.id);
+  return { ok: true };
+});
+// ล้างรายการที่ซื้อแล้วออกจากลิสต์
+route("POST", B + "/shopping/clear", async ctx => {
+  await needBranch(ctx, "stock", "edit");
+  const { rowCount } = await pool.query("UPDATE shop_items SET status='done' WHERE branch_id=$1 AND status='bought'", [ctx.branch.id]);
+  return { ok: true, count: rowCount };
 });
 
 /* ================= พนักงาน & เงินเดือน ================= */

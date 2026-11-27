@@ -723,7 +723,7 @@ async function openDoc(type, id, onSaved, prefill) {
   const catOpts = sel => (cats.includes(sel) || !sel ? "" : opt(sel, sel + " (เดิม)", true)) + cats.map(n => opt(n, n, n === sel)).join("");
   const stockOpts = sel => `<option value="">— ไม่ผูกสต็อก —</option>` + (S.stockItems || []).filter(i => i.active || i.id === sel).map(i => opt(i.id, i.name + (i.unit ? " (" + i.unit + ")" : ""), i.id === sel)).join("");
   const slChip = it => { const si = it.stockItemId && (S.stockItems || []).find(x => x.id === it.stockItemId);
-    if (it.stockItemId) return `<div class="sl-chip on"><button type="button" class="sl-main" data-slpick>${icon("stock", "")}<span><b>${esc(si ? si.name : "สินค้าในสต็อก")}</b> · รับเข้า ${fmtQ(num(it.qty))} ${esc(it.unit || (si && si.unit) || "")}${num(it.price) ? " @ " + fmt(num(it.price)) : ""}</span></button><button type="button" class="sl-x" data-slx title="เลิกผูกสต็อก">×</button></div>`;
+    if (it.stockItemId) return `<div class="sl-chip on"><button type="button" class="sl-main" data-slpick>${icon("stock", "")}<span><b>${esc(si ? si.name : "สินค้าในสต็อก")}</b> · รับเข้า ${fmtQ(num(it.qty))} ${esc(it.unit || (si && si.unit) || "")}${si && it.unit && it.unit !== si.unit && (si.units || []).some(u => u.n === it.unit) ? ` (= ${fmtQ(num(it.qty) * ufOf(si, it.unit))} ${esc(si.unit)})` : si && it.unit && it.unit !== si.unit ? ` <span style="color:var(--warn)">(หน่วยไม่ตรงสต็อก “${esc(si.unit)}” — นับเป็น ${esc(si.unit)})</span>` : ""}${num(it.price) ? " @ " + fmt(num(it.price)) : ""}</span></button><button type="button" class="sl-x" data-slx title="เลิกผูกสต็อก">×</button></div>`;
     return `<button type="button" class="sl-chip" data-slpick>${icon("stock", "")} ผูกสต็อก <span class="muted">(ของเข้าคลังอัตโนมัติ)</span></button>`; };
   const lineRow = (it, i) => `<tr data-i="${i}"><td class="ln">${i + 1}</td>
     <td class="c-name"><input class="input sm" data-f="name" value="${esc(it.name)}" placeholder="รายละเอียดสินค้า / บริการ" ${ro ? "readonly" : ""}>
@@ -1035,6 +1035,13 @@ async function statementModal(name, after) {
 const MOVE = { in: { th: "รับเข้า", chip: "good", sign: "+" }, out: { th: "เบิกใช้", chip: "blue", sign: "−" }, waste: { th: "ของเสีย / ทิ้ง", chip: "bad", sign: "−" }, count: { th: "ตรวจนับ", chip: "warn", sign: "±" } };
 /* ---------- สต็อก: หน้าเบิกของ (ใช้ง่ายบนมือถือ) ---------- */
 const NOCAT = "ไม่ระบุหมวด";
+/* ===== หน่วยนับหลายหน่วย (v2.7) ===== */
+const unitsOf = i => [{ n: i.unit || "", f: 1 }].concat(i.units || []);
+const ufOf = (i, u) => (unitsOf(i).find(x => x.n === u) || { f: 1 }).f;
+const unitSel = (i, cur, attr) => (i.units || []).length ? `<select class="input sm u-sel" ${attr}>${unitsOf(i).map(x => opt(x.n, x.f === 1 ? (x.n || "หน่วยหลัก") : `${x.n} (${fmtQ(x.f)} ${i.unit})`, x.n === (cur || i.unit))).join("")}</select>` : `<span class="u-txt">${esc(i.unit || "")}</span>`;
+const uNote = m => m.inUnit ? `<div class="muted small">${fmtQ(m.inQty)} ${esc(m.inUnit)}${m.inPrice != null ? " @ " + fmt(m.inPrice) : ""}</div>` : "";
+const unitsHint = i => (i.units || []).length ? (i.units || []).map(u => `1 ${u.n} = ${fmtQ(u.f)} ${i.unit}`).join(" · ") : "";
+
 // ปุ่มรับเข้า/ของเสีย/ตรวจนับ/เพิ่มสินค้า แบบแถวเดียว (เลื่อนแนวนอนได้บนมือถือ)
 function stockActions() {
   if (!canEdit("stock")) return "";
@@ -1045,7 +1052,7 @@ function stockActions() {
 function bindStockActions(root, after) {
   const n = $("[data-newitem]", root); if (n) n.onclick = () => stockItemModal(null, after);
   const cs = $("[data-copystock]", root); if (cs) cs.onclick = () => copyStockModal(S.bid, after);
-  $$("[data-mv]", root).forEach(b => { b.onclick = () => stockMoveModal(b.dataset.mv, null, after); });
+  $$("[data-mv]", root).forEach(b => { b.onclick = () => stockBatchModal(b.dataset.mv, null, after); });
 }
 const stockCats = items => { const order = listNames("stock_category"); const used = new Set(items.map(i => i.category || NOCAT));
   return [...order.filter(n => used.has(n)), ...[...used].filter(n => !order.includes(n) && n !== NOCAT), ...(used.has(NOCAT) ? [NOCAT] : [])]; };
@@ -1053,14 +1060,14 @@ const canManageCats = () => canEdit("settings") || (canEdit("stock") && approver
 const hm = ms => new Date(ms).toLocaleTimeString("th-TH", { timeZone: "Asia/Bangkok", hour: "2-digit", minute: "2-digit" });
 async function stockQuick(c, st, self) {
   const ed = canEdit("stock");
-  st.cart = st.cart || {};
+  st.cart = st.cart || {}; st.cartU = st.cartU || {};
   const [items, rec] = await Promise.all([loadStockItems(true), bapi("GET", "/stock/recent")]);
   const act = items.filter(i => i.active);
   Object.keys(st.cart).forEach(id => { if (!act.find(i => i.id === id)) delete st.cart[id]; });
   const body = $("[data-body]", c);
   const todayMv = rec.moves.filter(m => m.date === rec.today), yMv = rec.moves.filter(m => m.date !== rec.today);
   const recRow = m => `<div class="rc-row"><div class="grow"><div class="bold">${esc(m.itemName)}</div><div class="small muted">${esc(m.createdBy)} · ${m.date === rec.today ? "" : "เมื่อวาน "}${hm(m.createdAt)}${m.note ? " · " + esc(m.note) : ""}</div></div>
-    <div class="rc-qty">−${fmtQ(Math.abs(m.qty))} <span>${esc(m.unit)}</span></div>${m.canEdit ? `<button class="btn sm" data-editmv="${m.id}">${icon("edit")} แก้ไข</button>` : ""}</div>`;
+    <div class="rc-qty">${m.inUnit ? `−${fmtQ(m.inQty)} <span>${esc(m.inUnit)}</span><div class="small muted" style="font-weight:400">= ${fmtQ(Math.abs(m.qty))} ${esc(m.unit)}</div>` : `−${fmtQ(Math.abs(m.qty))} <span>${esc(m.unit)}</span>`}</div>${m.canEdit ? `<button class="btn sm" data-editmv="${m.id}">${icon("edit")} แก้ไข</button>` : ""}</div>`;
   const cats = stockCats(act);
   const count = n => act.filter(i => (i.category || NOCAT) === n).length;
   const lowN = act.filter(i => i.low || i.qty <= 0).length;
@@ -1081,26 +1088,28 @@ async function stockQuick(c, st, self) {
     $("[data-groups]", body).innerHTML = show.length ? groups.map(g => `<div class="q-group"><div class="q-gh">${esc(g.n)} <span>${g.list.length}</span></div><div class="q-grid">${g.list.map(i => { const inC = st.cart[i.id] != null;
       const cls = i.qty <= 0 ? "out" : i.low ? "low" : "";
       return `<div class="q-item ${cls} ${inC ? "sel" : ""}" data-qi="${i.id}">${i.photoV ? `<div class="q-head"><span class="q-ph" style="background-image:url('${stockPhoto(i)}')"></span><div class="q-name">${esc(i.name)}</div></div>` : `<div class="q-name">${esc(i.name)}</div>`}<div class="q-left">เหลือ <b>${fmtQ(i.qty)}</b> ${esc(i.unit)}${i.qty <= 0 ? " · หมด" : i.low ? " · ใกล้หมด" : ""}</div>${i.pending ? `<div class="q-pend">รออนุมัติ ${i.pending}</div>` : ""}
-        ${inC ? `<div class="q-step" data-step><button type="button" data-dec>−</button><input inputmode="decimal" value="${st.cart[i.id]}" data-qin><button type="button" data-inc>+</button></div>` : ed ? `<div class="q-tap">แตะเพื่อเบิก</div>` : ""}</div>`; }).join("")}</div></div>`).join("")
+        ${inC ? `<div class="q-step" data-step><button type="button" data-dec>−</button><input inputmode="decimal" value="${st.cart[i.id]}" data-qin><button type="button" data-inc>+</button></div>${(i.units || []).length ? `<div class="q-unit" data-step>${unitSel(i, st.cartU[i.id], "data-qu")}</div>` : ""}` : ed ? `<div class="q-tap">แตะเพื่อเบิก</div>` : ""}</div>`; }).join("")}</div></div>`).join("")
       : emptyBox(act.length ? "ไม่พบสินค้า" : "ยังไม่มีสินค้า — " + (ed ? "กด “เพิ่มสินค้า” ด้านบน" : "ให้ผู้จัดการเพิ่มสินค้า"), "stock");
     if (!ed) return;
     $$("[data-qi]", body).forEach(card => {
       const id = card.dataset.qi, it = act.find(i => i.id === id);
       card.onclick = e => { if (e.target.closest("[data-step]")) return; if (st.cart[id] != null) delete st.cart[id]; else st.cart[id] = 1; drawGroups(); };
       const inp = $("[data-qin]", card); if (!inp) return;
-      const set = v => { v = Math.max(0, Math.round(v * 1000) / 1000); if (!v) { delete st.cart[id]; drawGroups(); return; } st.cart[id] = v; inp.value = v; card.classList.toggle("over", v > it.qty); drawCart(); };
+      const fu = () => ufOf(it, st.cartU[id] || it.unit);
+      const set = v => { v = Math.max(0, Math.round(v * 1000) / 1000); if (!v) { delete st.cart[id]; drawGroups(); return; } st.cart[id] = v; inp.value = v; card.classList.toggle("over", v * fu() > it.qty); drawCart(); };
+      const qu = $("[data-qu]", card); if (qu) { qu.onclick = e => e.stopPropagation(); qu.onchange = () => { st.cartU[id] = qu.value; card.classList.toggle("over", st.cart[id] * fu() > it.qty); drawCart(); }; }
       $("[data-dec]", card).onclick = () => set(num(inp.value) - 1);
       $("[data-inc]", card).onclick = () => set(num(inp.value) + 1);
       inp.onclick = e => { e.stopPropagation(); inp.select(); };
-      inp.oninput = () => { const v = num(inp.value); if (v > 0) { st.cart[id] = v; card.classList.toggle("over", v > it.qty); drawCart(); } };
+      inp.oninput = () => { const v = num(inp.value); if (v > 0) { st.cart[id] = v; card.classList.toggle("over", v * fu() > it.qty); drawCart(); } };
       inp.onblur = () => { if (!(num(inp.value) > 0)) set(0); };
-      card.classList.toggle("over", st.cart[id] > it.qty);
+      card.classList.toggle("over", st.cart[id] * fu() > it.qty);
     });
     drawCart();
   };
   const drawCart = () => { const bar = $("[data-cartbar]", body); if (!bar) return; const ids = Object.keys(st.cart);
     bar.classList.toggle("hidden", !ids.length); $("[data-cartn]", bar).textContent = "เลือกเบิก " + ids.length + " รายการ";
-    $("[data-cartlist]", bar).textContent = ids.map(id => { const i = act.find(x => x.id === id); return i.name + " " + fmtQ(st.cart[id]) + " " + i.unit; }).join(" · "); };
+    $("[data-cartlist]", bar).textContent = ids.map(id => { const i = act.find(x => x.id === id); return i.name + " " + fmtQ(st.cart[id]) + " " + (st.cartU[id] || i.unit); }).join(" · "); };
   drawGroups();
   $("[data-qq]", body).oninput = debounce(e => { st.qq = e.target.value; drawGroups(); }, 150);
   $$("[data-qc]", body).forEach(b => { b.onclick = () => { st.qcat = b.dataset.qc; $$("[data-qc]", body).forEach(x => x.classList.toggle("on", x === b)); drawGroups(); }; });
@@ -1110,30 +1119,126 @@ async function stockQuick(c, st, self) {
   const mc = $("[data-mancat]", body); if (mc) mc.onclick = () => stockCatManager(items, () => self.render(c));
   bindStockActions(body, () => self.render(c));
   if (!ed) return;
-  $("[data-cartclear]", body).onclick = () => { st.cart = {}; drawGroups(); };
+  $("[data-cartclear]", body).onclick = () => { st.cart = {}; st.cartU = {}; drawGroups(); };
   $("[data-cartgo]", body).onclick = () => {
     const ids = Object.keys(st.cart);
     const m = openModal({ title: "ยืนยันเบิกของ " + ids.length + " รายการ", body: `<div class="q-confirm">${ids.map(id => { const i = act.find(x => x.id === id);
-        return `<div class="rc-row"><div class="grow"><div class="bold">${esc(i.name)}</div><div class="small muted">คงเหลือ ${fmtQ(i.qty)} ${esc(i.unit)}</div></div><input class="input num" style="width:90px" inputmode="decimal" data-cq="${id}" value="${st.cart[id]}"><span class="small" style="width:44px">${esc(i.unit)}</span></div>`; }).join("")}</div>
+        return `<div class="rc-row"><div class="grow"><div class="bold">${esc(i.name)}</div><div class="small muted">คงเหลือ ${fmtQ(i.qty)} ${esc(i.unit)}</div></div><input class="input num" style="width:90px" inputmode="decimal" data-cq="${id}" value="${st.cart[id]}">${(i.units || []).length ? unitSel(i, st.cartU[id], `data-cu="${id}" style="width:auto;max-width:130px"`) : `<span class="small" style="width:44px">${esc(i.unit)}</span>`}</div>`; }).join("")}</div>
       <div class="grid g2" style="margin-top:12px"><label class="field"><span>วันที่เบิก</span><input type="date" class="input" name="date" value="${today()}"></label><label class="field"><span>หมายเหตุ (ไม่บังคับ)</span><input class="input" name="note" placeholder="เช่น ใช้ทำอาหารกะเช้า"></label></div>
       <div class="info-box" style="margin-top:12px">${icon("check", "").replace("<svg", '<svg style="width:14px;height:14px;vertical-align:-2px"')} การเบิกจะตัดสต็อกทันที ไม่ต้องรออนุมัติ · แก้ไข/ลบการเบิกของตัวเองได้ภายในวันนี้</div>`,
       foot: `<button class="btn" data-close>กลับไปแก้</button><button class="btn primary" data-ok>${icon("check")} ยืนยันเบิก</button>` });
     const ok = $("[data-ok]", m.el); ok.onclick = () => withBtn(ok, async () => {
-      const lines = $$("[data-cq]", m.el).map(x => ({ itemId: x.dataset.cq, qty: num(x.value) })).filter(l => l.qty > 0);
+      const lines = $$("[data-cq]", m.el).map(x => { const u = $(`[data-cu="${x.dataset.cq}"]`, m.el); return { itemId: x.dataset.cq, qty: num(x.value), unit: u ? u.value : undefined }; }).filter(l => l.qty > 0);
       if (!lines.length) throw new Error("ใส่จำนวนที่เบิก");
       await bapi("POST", "/stock/moves", { kind: "out", date: $("[name=date]", m.el).value, note: $("[name=note]", m.el).value, lines });
-      st.cart = {}; S.stockItems = null; m.close(); toast("เบิกแล้ว " + lines.length + " รายการ · ตัดสต็อกแล้ว"); self.render(c);
+      st.cart = {}; st.cartU = {}; S.stockItems = null; m.close(); toast("เบิกแล้ว " + lines.length + " รายการ · ตัดสต็อกแล้ว"); self.render(c);
     }).catch(() => {});
   };
 }
+/* ===== รายการที่จะซื้อ (Check List) — v2.7 ===== */
+async function stockShop(c, st, self) {
+  const ed = canEdit("stock"), body = $("[data-body]", c);
+  const [d, items] = await Promise.all([bapi("GET", "/shopping"), loadStockItems(true)]);
+  const rerender = () => { S.stockItems = null; self.render(c); };
+  const open = d.items.filter(x => x.status === "open"), bought = d.items.filter(x => x.status === "bought");
+  // รวมเป็นแถวเดียวกัน: ของใกล้หมด (อัตโนมัติ) + ที่เพิ่มเอง
+  const rows = open.map(x => ({ ...x, kind: "row" })).concat(d.suggest.map(x => ({ ...x, kind: "auto", id: "auto-" + x.itemId })));
+  const catOf = x => x.category || NOCAT;
+  const order = listNames("stock_category"); const cats = [...new Set(rows.concat(bought).map(catOf))].sort((a, b) => { const ia = order.indexOf(a), ib = order.indexOf(b); return (ia < 0 ? 999 : ia) - (ib < 0 ? 999 : ib) || a.localeCompare(b, "th"); });
+  const itemOf = x => x.itemId && items.find(i => i.id === x.itemId);
+  const want = x => { const it = itemOf(x); if (x.kind === "auto") return `<span class="chip warn plain">ใกล้หมด</span> เหลือ ${fmtQ(x.qty)} ${esc(x.unit)} · จุดสั่งซื้อ ${fmtQ(x.minQty)}`;
+    return (x.qty ? `ต้องการ <b>${fmtQ(x.qty)} ${esc(x.unit)}</b>` : "") + (it ? `${x.qty ? " · " : ""}เหลือ ${fmtQ(it.qty)} ${esc(it.unit)}` : (x.qty ? "" : `<span class="muted">ไม่อยู่ในสต็อก</span>`)) + (x.note ? " · " + esc(x.note) : ""); };
+  const rowH = x => `<div class="sh-row" data-sid="${x.id}"><button type="button" class="sh-box" data-buy="${x.id}" ${ed ? "" : "disabled"} aria-label="ติ๊กซื้อแล้ว"></button>
+    <div class="grow" data-buy2="${x.id}"><div class="sh-name">${esc(x.name)}</div><div class="small muted">${want(x)}</div></div>
+    ${ed && x.kind === "row" ? `<button type="button" class="btn ghost sm icon" data-shdel="${x.id}" title="ลบออกจากลิสต์">${icon("trash")}</button>` : ""}</div>`;
+  const boughtH = x => `<div class="sh-row done"><span class="sh-box on">✓</span><div class="grow"><div class="sh-name">${esc(x.name)}</div>
+    <div class="small muted">ซื้อแล้ว${x.boughtQty ? " " + fmtQ(x.boughtQty) + " " + esc(x.boughtUnit) : ""}${x.boughtPrice != null ? " @ " + fmt(x.boughtPrice) + (x.boughtQty ? " = " + fmt(x.boughtQty * x.boughtPrice) : "") : ""} · ${esc(x.boughtBy)} ${hm(x.boughtAt)}
+      ${x.moveId ? (x.moveStatus === "pending" ? ` · <span class="chip warn plain">รับเข้าสต็อก รออนุมัติ</span>` : x.moveStatus === "rejected" ? ` · <span class="chip bad plain">ไม่อนุมัติ</span>` : ` · <span class="chip good plain">เข้าสต็อกแล้ว</span>`) : ""}</div></div>
+    ${x.canUndo ? `<button type="button" class="btn sm" data-undo="${x.id}">ยกเลิก</button>` : ""}</div>`;
+  const total = bought.reduce((a, x) => a + (x.boughtQty && x.boughtPrice != null ? x.boughtQty * x.boughtPrice : 0), 0);
+  body.innerHTML = `<div class="sh-head"><div class="grow"><b>ต้องซื้อ ${rows.length} รายการ</b><div class="small muted">ของที่เหลือต่ำกว่าจุดสั่งซื้อขึ้นมาให้อัตโนมัติ · ติ๊ก ☐ เมื่อซื้อแล้ว → ใส่จำนวนและราคา → รับเข้าสต็อกให้เลย</div></div>
+      ${ed ? `<button class="btn primary" data-shadd>${icon("plus")} เพิ่มรายการ</button>` : ""}</div>
+    ${rows.length || bought.length ? cats.map(cn => { const r = rows.filter(x => catOf(x) === cn), b = bought.filter(x => catOf(x) === cn); if (!r.length && !b.length) return "";
+      return `<div class="sh-group"><div class="q-gh">${esc(cn)} <span>${r.length}${b.length ? " · ซื้อแล้ว " + b.length : ""}</span></div><div class="card sh-card">${r.map(rowH).join("")}${b.map(boughtH).join("")}</div></div>`; }).join("")
+      : emptyBox("ยังไม่มีรายการที่ต้องซื้อ — ตั้ง “จุดสั่งซื้อ” ให้สินค้า แล้วของใกล้หมดจะขึ้นที่นี่เอง หรือกด “เพิ่มรายการ”", "stock")}
+    ${bought.length ? `<div class="row wrap" style="margin-top:12px"><span class="muted small grow">ซื้อแล้ว ${bought.length} รายการ${total ? " · รวม " + baht(total) : ""} (แสดง 3 วันล่าสุด)</span>${ed ? `<button class="btn sm" data-shclear>ล้างรายการที่ซื้อแล้ว</button>` : ""}</div>` : ""}`;
+  const findRow = id => rows.find(x => x.id === id);
+  if (!ed) return;
+  const buy = id => shopBuyModal(findRow(id), itemOf(findRow(id)), rerender);
+  $$("[data-buy]", body).forEach(b => { b.onclick = () => buy(b.dataset.buy); });
+  $$("[data-buy2]", body).forEach(b => { b.onclick = () => buy(b.dataset.buy2); });
+  $$("[data-shdel]", body).forEach(b => { b.onclick = async () => { try { await bapi("DELETE", "/shopping/" + b.dataset.shdel); toast("ลบออกจากลิสต์แล้ว"); rerender(); } catch (e) { toast(e.message, "bad"); } }; });
+  $$("[data-undo]", body).forEach(b => { b.onclick = async () => { const x = bought.find(y => y.id === b.dataset.undo);
+    if (!await confirmBox(`ยกเลิก “ซื้อแล้ว” ของ ${x.name}?${x.moveId ? "\nรายการรับเข้าสต็อกที่สร้างไว้จะถูกลบด้วย" : ""}`, { okText: "ยกเลิกซื้อแล้ว", danger: true })) return;
+    try { await bapi("POST", "/shopping/" + x.id + "/undo"); toast("กลับเป็นรายการที่ต้องซื้อแล้ว"); rerender(); } catch (e) { toast(e.message, "bad"); } }; });
+  const clr = $("[data-shclear]", body); if (clr) clr.onclick = async () => { await bapi("POST", "/shopping/clear"); toast("ล้างแล้ว"); rerender(); };
+  $("[data-shadd]", body).onclick = () => shopAddModal(items, rows, rerender);
+}
+function shopBuyModal(x, it, after) {
+  const isStock = !!it;
+  const defU = isStock ? (x.unit && unitsOf(it).some(u => u.n === x.unit) ? x.unit : it.unit) : (x.unit || "");
+  const m = openModal({ title: "ซื้อแล้ว · " + esc(x.name), body: `
+    ${isStock ? `<div class="muted small" style="margin-bottom:10px">คงเหลือในสต็อก ${fmtQ(it.qty)} ${esc(it.unit)}${unitsHint(it) ? " · " + esc(unitsHint(it)) : ""}${it.avgCost ? " · ทุนเฉลี่ย " + fmt(it.avgCost) + " / " + esc(it.unit) : ""}</div>` : `<div class="muted small" style="margin-bottom:10px">ของนี้ไม่ได้อยู่ในสต็อก — จะติ๊กว่าซื้อแล้วอย่างเดียว (จำนวน/ราคาไม่บังคับ)</div>`}
+    <div class="grid g2"><div class="field"><span style="display:block;font-size:13px;color:var(--text-2);margin-bottom:5px;font-weight:500">จำนวนที่ซื้อ ${isStock ? "<em>*</em>" : ""}</span><div class="row" style="gap:6px"><input class="input num grow" name="qty" inputmode="decimal" value="${x.qty || ""}" placeholder="0">${isStock ? unitSel(it, defU, 'name="unit" style="width:auto"') : `<input class="input" name="unit" style="width:90px" value="${esc(defU)}" placeholder="หน่วย">`}</div></div>
+      <label class="field"><span>ราคาต่อ <span data-pu>${esc(defU || "หน่วย")}</span> (บาท)</span><input class="input num" name="price" inputmode="decimal" placeholder="${isStock ? fmt(it.avgCost * ufOf(it, defU)) : "0.00"}"></label></div>
+    <div class="info-box" style="margin-top:10px" data-sum></div>
+    <div class="grid g2" style="margin-top:10px"><label class="field"><span>วันที่ซื้อ</span><input type="date" class="input" name="date" value="${today()}"></label><label class="field"><span>หมายเหตุ</span><input class="input" name="note" placeholder="เช่น ซื้อที่แม็คโคร"></label></div>
+    ${isStock && !approver("stock") ? `<div class="field-hint" style="margin-top:8px">การรับเข้าสต็อกจะรอผู้จัดการอนุมัติ</div>` : ""}`,
+    foot: `<button class="btn" data-close>ยกเลิก</button><button class="btn primary" data-ok>${icon("check")} ซื้อแล้ว${isStock ? " · รับเข้าสต็อก" : ""}</button>` });
+  const el = m.el, f = () => isStock ? ufOf(it, $("[name=unit]", el).value) : 1;
+  const sum = () => { const q = num($("[name=qty]", el).value), pv = $("[name=price]", el).value, pr = pv === "" ? (isStock ? it.avgCost * f() : 0) : num(pv), u = $("[name=unit]", el).value;
+    $("[data-pu]", el).textContent = u || "หน่วย"; if (isStock) $("[name=price]", el).placeholder = fmt(it.avgCost * f());
+    $("[data-sum]", el).innerHTML = q > 0 ? `${fmtQ(q)} ${esc(u)}${isStock && f() !== 1 ? ` = <b>${fmtQ(q * f())} ${esc(it.unit)}</b>` : ""}${pr ? ` · รวม <b>${baht(q * pr)}</b>` : ""}${isStock && pr ? ` · ต้นทุน ${fmt(pr / f())} / ${esc(it.unit)}` : ""}` : "ใส่จำนวนที่ซื้อ"; };
+  ["qty", "price"].forEach(n => { $(`[name=${n}]`, el).oninput = sum; }); $("[name=unit]", el).onchange = sum; $("[name=unit]", el).oninput = sum; sum();
+  const ok = $("[data-ok]", el); ok.onclick = () => withBtn(ok, async () => {
+    const q = $("[name=qty]", el).value, pv = $("[name=price]", el).value;
+    if (isStock && !(num(q) > 0)) throw new Error("กรุณาใส่จำนวนที่ซื้อ");
+    const body = { qty: q === "" ? "" : num(q), unit: $("[name=unit]", el).value, price: pv === "" ? (isStock ? r2(it.avgCost * f()) : "") : num(pv), date: $("[name=date]", el).value, note: $("[name=note]", el).value };
+    if (x.kind === "auto") body.itemId = x.itemId; else body.id = x.id;
+    const r = await bapi("POST", "/shopping/buy", body);
+    m.close(); toast(r.stocked ? (r.pending ? "ติ๊กซื้อแล้ว · รับเข้าสต็อกรออนุมัติ" : "ติ๊กซื้อแล้ว · รับเข้าสต็อกแล้ว") : "ติ๊กซื้อแล้ว"); after();
+  }).catch(() => {});
+}
+function shopAddModal(items, rows, after) {
+  const act = items.filter(i => i.active), inList = new Set(rows.map(r => r.itemId).filter(Boolean));
+  let pick = null;
+  const m = openModal({ title: "เพิ่มรายการที่จะซื้อ", size: "lg", body: `
+    <div class="search" style="max-width:none;margin-bottom:8px">${icon("search", "")}<input class="input" data-aq placeholder="ค้นหาสินค้าในสต็อก หรือพิมพ์ชื่อของที่จะซื้อ"></div>
+    <div class="sp-list" data-alist style="max-height:34vh"></div>
+    <div class="sh-form" data-aform></div>`,
+    foot: `<button class="btn" data-close>ปิด</button><button class="btn primary" data-ok>${icon("plus")} เพิ่มลงลิสต์</button>` });
+  const el = m.el;
+  const drawForm = () => { const q = $("[data-aq]", el).value.trim();
+    $("[data-aform]", el).innerHTML = pick ? `<div class="section-t" style="margin-top:12px">${esc(pick.name)}</div><div class="grid g2"><div class="field"><span style="display:block;font-size:13px;color:var(--text-2);margin-bottom:5px;font-weight:500">จำนวนที่ต้องการ (ไม่บังคับ)</span><div class="row" style="gap:6px"><input class="input num grow" name="qty" inputmode="decimal" placeholder="เช่น 2">${unitSel(pick, pick.unit, 'name="unit" style="width:auto"')}</div></div><label class="field"><span>หมายเหตุ</span><input class="input" name="note" placeholder="เช่น ยี่ห้อมิตรผล"></label></div>`
+      : `<div class="section-t" style="margin-top:12px">หรือ เพิ่มของที่ไม่ได้อยู่ในสต็อก</div><div class="grid g2"><label class="field"><span>ชื่อ <em>*</em></span><input class="input" name="name" value="${esc(q)}" placeholder="เช่น ถุงขยะ น้ำยาล้างจาน"></label>
+        <div class="field"><span style="display:block;font-size:13px;color:var(--text-2);margin-bottom:5px;font-weight:500">จำนวน / หน่วย</span><div class="row" style="gap:6px"><input class="input num grow" name="qty" inputmode="decimal" placeholder="จำนวน"><input class="input" name="unit" style="width:90px" placeholder="หน่วย" list="unit-dl4"><datalist id="unit-dl4">${listNames("unit").map(n => opt(n)).join("")}</datalist></div></div></div>
+        <div class="field"><span style="display:block;font-size:13px;color:var(--text-2);margin-bottom:5px;font-weight:500">หมวด</span>${catPicker("")}</div>`;
+    if (!pick) bindCatPicker(el); };
+  const drawList = () => { const q = $("[data-aq]", el).value.trim().toLowerCase();
+    const list = act.filter(i => !q || (i.name + " " + i.sku + " " + i.category).toLowerCase().includes(q)).slice(0, 60);
+    $("[data-alist]", el).innerHTML = list.length ? list.map(i => `<button type="button" class="sp-item ${pick && pick.id === i.id ? "on" : ""}" data-ai="${i.id}" ${inList.has(i.id) ? "disabled" : ""}>${i.photoV ? `<span class="sp-ph" style="background-image:url('${stockPhoto(i)}')"></span>` : `<span class="sp-ph">${icon("stock", "")}</span>`}<span class="sp-t"><b>${esc(i.name)}</b><span class="muted small">${esc(i.category || NOCAT)} · เหลือ ${fmtQ(i.qty)} ${esc(i.unit)}${i.low ? " · ใกล้หมด" : ""}</span></span><span class="sp-go">${inList.has(i.id) ? "อยู่ในลิสต์แล้ว" : pick && pick.id === i.id ? "✓" : "เลือก"}</span></button>`).join("")
+      : `<div class="muted small" style="padding:6px 2px">ไม่พบในสต็อก — เพิ่มเป็นของนอกสต็อกด้านล่างได้</div>`;
+    $$("[data-ai]", el).forEach(b => { b.onclick = () => { pick = pick && pick.id === b.dataset.ai ? null : act.find(i => i.id === b.dataset.ai); drawList(); drawForm(); }; }); };
+  $("[data-aq]", el).oninput = debounce(() => { pick = null; drawList(); drawForm(); }, 150);
+  drawList(); drawForm();
+  const ok = $("[data-ok]", el); ok.onclick = () => withBtn(ok, async () => {
+    const f = formData($("[data-aform]", el));
+    if (pick) await bapi("POST", "/shopping", { itemId: pick.id, qty: f.qty, unit: f.unit, note: f.note });
+    else { if (!String(f.name || "").trim()) throw new Error("เลือกสินค้าจากรายการ หรือพิมพ์ชื่อของที่จะซื้อ"); await bapi("POST", "/shopping", { name: f.name.trim(), qty: f.qty, unit: f.unit, category: f.category }); }
+    toast("เพิ่มลงลิสต์แล้ว"); if (pick) inList.add(pick.id); pick = null; $("[data-aq]", el).value = ""; drawList(); drawForm(); m._added = true;
+  }).catch(() => {});
+  const oc = m.close; m.close = () => { oc(); if (m._added) after(); }; $$("[data-close],[data-x]", el).forEach(b => { b.onclick = () => m.close(); });
+}
 function editMoveModal(mv, after) {
   const isCount = mv.kind === "count";
+  const si = (S.stockItems || []).find(x => x.id === mv.itemId) || { unit: mv.unit, units: [] };
+  const q0 = mv.inUnit ? mv.inQty : (isCount ? mv.counted : Math.abs(mv.qty));
   const m = openModal({ title: "แก้ไข" + MOVE[mv.kind].th + " · " + esc(mv.itemName), body: `<div class="muted small" style="margin-bottom:10px">บันทึกโดย ${esc(mv.createdBy)} · ${thDate(mv.date)} ${hm(mv.createdAt)}</div>
-    <div class="grid g2"><label class="field"><span>${isCount ? "ยอดที่นับได้" : "จำนวน"} (${esc(mv.unit)})</span><input class="input num" name="qty" inputmode="decimal" value="${isCount ? mv.counted : Math.abs(mv.qty)}"></label>
+    <div class="grid g2"><div class="field"><span style="display:block;font-size:13px;color:var(--text-2);margin-bottom:5px;font-weight:500">${isCount ? "ยอดที่นับได้" : "จำนวน"}</span><div class="row" style="gap:6px"><input class="input num grow" name="qty" inputmode="decimal" value="${q0}">${unitSel(si, mv.inUnit || mv.unit, 'data-eu style="width:auto"')}</div></div>
     <label class="field"><span>หมายเหตุ</span><input class="input" name="note" value="${esc(mv.note)}"></label></div>
     <div class="field-hint" style="margin-top:8px">การแก้ไขจะถูกบันทึกไว้ใน Log (จำนวนเดิม → ใหม่)</div>`,
     foot: `<div class="left"><button class="btn danger" data-del>${icon("trash")} ลบรายการนี้</button></div><button class="btn" data-close>ยกเลิก</button><button class="btn primary" data-ok>${icon("check")} บันทึก</button>` });
-  const ok = $("[data-ok]", m.el); ok.onclick = () => withBtn(ok, async () => { await bapi("PUT", "/stock/moves/" + mv.id, { qty: num($("[name=qty]", m.el).value, NaN), note: $("[name=note]", m.el).value }); S.stockItems = null; m.close(); toast("แก้ไขแล้ว"); after(); }).catch(() => {});
+  const ok = $("[data-ok]", m.el); ok.onclick = () => withBtn(ok, async () => { const eu = $("[data-eu]", m.el); await bapi("PUT", "/stock/moves/" + mv.id, { qty: num($("[name=qty]", m.el).value, NaN), unit: eu ? eu.value : undefined, note: $("[name=note]", m.el).value }); S.stockItems = null; m.close(); toast("แก้ไขแล้ว"); after(); }).catch(() => {});
   $("[data-del]", m.el).onclick = async () => { if (!await confirmBox("ลบ" + MOVE[mv.kind].th + " " + mv.itemName + " " + fmtQ(Math.abs(mv.qty)) + " " + mv.unit + "?" + (mv.status === "approved" ? "\nยอดคงเหลือจะถูกคืนกลับ" : ""), { danger: true, okText: "ลบ" })) return;
     try { await bapi("DELETE", "/stock/moves/" + mv.id); S.stockItems = null; m.close(); toast("ลบแล้ว"); after(); } catch (e) { toast(e.message, "bad"); } };
 }
@@ -1181,9 +1286,10 @@ BRANCH_PAGES.stock = { title: () => "สต็อกสินค้า", state: 
   const st = this.state, self = this;
   const ed = canEdit("stock");
   c.innerHTML = `<div class="page-head stock-head"><div class="grow"><h2>สต็อกสินค้า / วัตถุดิบ</h2><div class="muted small hide-m">ต้นทุนคิดแบบถัวเฉลี่ยถ่วงน้ำหนัก · ซื้อผ่านเอกสารรายจ่ายที่ “ผูกสต็อก” จะรับเข้าสต็อกให้อัตโนมัติ</div></div></div>
-    <div class="tabs"><button data-tab="quick" class="${st.tab === "quick" ? "on" : ""}">${ed ? "เบิกของ" : "สินค้า"}</button><button data-tab="items" class="${st.tab === "items" ? "on" : ""}">ตารางคงเหลือ</button><button data-tab="moves" class="${st.tab === "moves" ? "on" : ""}">ประวัติความเคลื่อนไหว</button></div><div data-body></div>`;
+    <div class="tabs"><button data-tab="quick" class="${st.tab === "quick" ? "on" : ""}">${ed ? "เบิกของ" : "สินค้า"}</button><button data-tab="shop" class="${st.tab === "shop" ? "on" : ""}">${icon("check", "").replace("<svg", '<svg style="width:14px;height:14px;vertical-align:-2px"')} รายการที่จะซื้อ</button><button data-tab="items" class="${st.tab === "items" ? "on" : ""}">ตารางคงเหลือ</button><button data-tab="moves" class="${st.tab === "moves" ? "on" : ""}">ประวัติความเคลื่อนไหว</button></div><div data-body></div>`;
   $$("[data-tab]", c).forEach(b => { b.onclick = () => { st.tab = b.dataset.tab; self.render(c); }; });
   if (st.tab === "quick") return stockQuick(c, st, self);
+  if (st.tab === "shop") return stockShop(c, st, self);
   const items = await loadStockItems(true);
   const body = $("[data-body]", c);
   body.insertAdjacentHTML("beforebegin", stockActions()); bindStockActions(c, () => self.render(c));
@@ -1226,7 +1332,7 @@ function movesTable(mv, showItem) {
   S._mvCache = mv;
   return `<table class="tbl"><thead><tr><th>วันที่</th>${showItem ? "<th>สินค้า</th>" : ""}<th>ประเภท</th><th class="num">จำนวน</th><th class="num">ต้นทุน/หน่วย</th><th class="num">มูลค่า</th><th class="num">คงเหลือ</th><th>สถานะ</th><th>อ้างอิง / หมายเหตุ</th><th></th></tr></thead><tbody>
     ${mv.map(m => { const ap = m.status === "approved"; return `<tr style="${m.status === "rejected" ? "opacity:.6" : ""}"><td>${thDate(m.date, true)}</td>${showItem ? `<td class="bold">${esc(m.itemName)}</td>` : ""}<td><span class="chip ${MOVE[m.kind].chip}">${MOVE[m.kind].th}</span></td>
-      <td class="num bold ${m.qty < 0 ? "neg" : m.qty > 0 ? "pos" : ""}">${ap || m.kind !== "count" ? (m.qty > 0 ? "+" : "") + fmtQ(m.qty) : "±"} <span class="muted small">${esc(m.unit)}</span>${m.kind === "count" ? `<div class="muted small">นับได้ ${fmtQ(m.counted)}</div>` : ""}</td>
+      <td class="num bold ${m.qty < 0 ? "neg" : m.qty > 0 ? "pos" : ""}">${ap || m.kind !== "count" ? (m.qty > 0 ? "+" : "") + fmtQ(m.qty) : "±"} <span class="muted small">${esc(m.unit)}</span>${uNote(m)}${m.kind === "count" ? `<div class="muted small">นับได้ ${fmtQ(m.counted)}</div>` : ""}</td>
       <td class="num">${ap || m.kind === "in" ? fmt(m.unitCost) : "-"}</td><td class="num">${ap ? fmt(m.amount) : "-"}</td><td class="num">${ap ? fmtQ(m.balance) : "-"}</td>
       <td><span class="chip ${MSTATUS[m.status][1]}">${MSTATUS[m.status][0]}</span>${m.status !== "pending" && m.approvedBy && !m.refRecordId ? `<div class="muted small">${esc(m.approvedBy)}</div>` : ""}${m.rejectReason ? `<div class="small neg">${esc(m.rejectReason)}</div>` : ""}</td>
       <td class="small">${m.docNo ? `<span class="doc">${esc(m.docNo)}</span> ` : ""}${esc(m.note)}<div class="muted">${esc(m.createdBy)}</div></td>
@@ -1260,16 +1366,28 @@ function stockItemModal(item, after) {
     <label class="field"><span>ชื่อสินค้า / วัตถุดิบ <em>*</em></span><input class="input" name="name" value="${esc(item.name)}" placeholder="เช่น หมูสับ, ข้าวหอมมะลิ"></label>
     <label class="field"><span>รหัสสินค้า (SKU)</span><input class="input" name="sku" value="${esc(item.sku)}"></label>
     <div class="field" style="grid-column:1/-1"><span style="display:block;font-size:13px;color:var(--text-2);margin-bottom:5px;font-weight:500">หมวดสต็อก (แตะเลือก หรือพิมพ์หมวดใหม่)</span>${catPicker(item.category)}</div>
-    <label class="field"><span>หน่วยนับ</span><input class="input" name="unit" value="${esc(item.unit)}" list="unit-dl2" placeholder="เช่น กก."><datalist id="unit-dl2">${listNames("unit").map(n => opt(n)).join("")}</datalist></label>
+    <label class="field"><span>หน่วยหลัก (หน่วยที่นับสต็อก)</span><input class="input" name="unit" value="${esc(item.unit)}" list="unit-dl2" placeholder="เช่น กก."><datalist id="unit-dl2">${listNames("unit").map(n => opt(n)).join("")}</datalist></label>
     <label class="field"><span>จุดสั่งซื้อ (แจ้งเตือนเมื่อเหลือไม่เกิน)</span><input class="input num" name="minQty" value="${esc(item.minQty || "")}" inputmode="decimal" placeholder="0 = ไม่แจ้งเตือน"></label>
     <label class="field"><span>หมายเหตุ</span><input class="input" name="note" value="${esc(item.note)}"></label>
+    <div class="units-ed" style="grid-column:1/-1"><div class="bold" style="font-size:13.5px">หน่วยอื่น (ไม่บังคับ) — เช่น ซื้อเป็นถุง / ลัง / แพ็ค</div>
+      <div data-urows></div><button type="button" class="btn sm" data-uadd>${icon("plus")} เพิ่มหน่วย</button>
+      <div class="field-hint" style="margin-top:6px">สต็อกนับเป็น <b>หน่วยหลัก</b> เสมอ · ตอนรับเข้า / เบิก / ตรวจนับ / ผูกรายจ่าย เลือกหน่วยไหนก็ได้ ระบบแปลงให้ และคิดต้นทุนต่อหน่วยหลักให้ถูกต้อง (เช่น 1 ถุง = 2 กก. ราคาถุงละ 62.50 → ต้นทุน 31.25 / กก.)</div></div>
     <div style="grid-column:1/-1">${photoBox(item.photoV ? stockPhoto(item) : "", "รูปสินค้า (ช่วยให้พนักงานเบิกถูก)")}</div></div>
     ${isNew ? `<div class="section-t" style="margin-top:18px">ยอดยกมา (ไม่บังคับ)</div><div class="grid g3"><label class="field"><span>จำนวนคงเหลือตอนนี้</span><input class="input num" name="openingQty" inputmode="decimal" placeholder="0"></label>
       <label class="field"><span>ต้นทุนต่อหน่วย (บาท)</span><input class="input num" name="openingCost" inputmode="decimal" placeholder="0.00"></label><label class="field"><span>ณ วันที่</span><input type="date" class="input" name="openingDate" value="${today()}"></label></div>` : ""}`,
     foot: `<button class="btn" data-close>ยกเลิก</button><button class="btn primary" data-save>${icon("check")} บันทึก</button>` });
   bindCatPicker(m.el); const getPhoto = bindPhotoBox(m.el);
+  const urows = (item.units || []).map(u => ({ ...u }));
+  const drawU = () => { const base = $("[name=unit]", m.el).value.trim() || "หน่วยหลัก";
+    $("[data-urows]", m.el).innerHTML = urows.map((u, k) => `<div class="u-row" data-k="${k}"><span>1</span><input class="input sm" data-un value="${esc(u.n || "")}" placeholder="เช่น ถุง" list="unit-dl2"><span>=</span><input class="input sm num" data-uf value="${u.f || ""}" inputmode="decimal" placeholder="2"><span class="u-base">${esc(base)}</span><button type="button" class="btn ghost sm icon" data-urm>${icon("trash")}</button></div>`).join("");
+    $$(".u-row", m.el).forEach(r => { const k = +r.dataset.k; $("[data-un]", r).oninput = e => { urows[k].n = e.target.value; }; $("[data-uf]", r).oninput = e => { urows[k].f = e.target.value; }; $("[data-urm]", r).onclick = () => { urows.splice(k, 1); drawU(); }; }); };
+  $("[data-uadd]", m.el).onclick = () => { urows.push({ n: "", f: "" }); drawU(); const ins = $$("[data-un]", m.el); if (ins.length) ins[ins.length - 1].focus(); };
+  $("[name=unit]", m.el).addEventListener("input", () => $$(".u-base", m.el).forEach(x => { x.textContent = $("[name=unit]", m.el).value.trim() || "หน่วยหลัก"; }));
+  drawU();
   const sv = $("[data-save]", m.el);
-  sv.onclick = () => withBtn(sv, async () => { const f = formData(m.el); const pv = getPhoto(); if (pv !== undefined) f.photo = pv; f.minQty = num(f.minQty); f.openingQty = num(f.openingQty); f.openingCost = num(f.openingCost);
+  sv.onclick = () => withBtn(sv, async () => { const f = formData(m.el); const pv = getPhoto(); if (pv !== undefined) f.photo = pv;
+    f.units = urows.filter(u => String(u.n || "").trim() || String(u.f || "").trim()).map(u => ({ n: String(u.n || "").trim(), f: num(u.f) }));
+    f.minQty = num(f.minQty); f.openingQty = num(f.openingQty); f.openingCost = num(f.openingCost);
     if (f.category && !listNames("stock_category").includes(f.category)) { await bapi("POST", "/lists", { kind: "stock_category", name: f.category }); S.lists = (await bapi("GET", "/lists")).lists; }
     const r = isNew ? await bapi("POST", "/stock/items", f) : await bapi("PUT", "/stock/items/" + item.id, f);
     S.stockItems = null; toast(r.pending ? "บันทึกสินค้าแล้ว · ยอดยกมารออนุมัติ" : "บันทึกสินค้าแล้ว"); m.close(); after(); }).catch(() => {});
@@ -1279,6 +1397,7 @@ async function stockItemDetail(id, after) {
   const mv = (await bapi("GET", "/stock/moves?from=2000-01-01&to=2100-12-31&itemId=" + id)).moves;
   const m = openModal({ title: esc(it.name), size: "xl", body: `${it.photoV ? `<div class="detail-ph" data-dph style="background-image:url('${stockPhoto(it)}')"></div>` : ""}<div class="pay-grid" style="margin-bottom:16px"><div class="mini-kpi"><div class="l">คงเหลือ</div><div class="v">${fmtQ(it.qty)} ${esc(it.unit)}</div></div><div class="mini-kpi"><div class="l">ต้นทุนเฉลี่ย/หน่วย</div><div class="v">${baht(it.avgCost)}</div></div>
       <div class="mini-kpi"><div class="l">มูลค่าคงเหลือ</div><div class="v">${baht(it.value)}</div></div><div class="mini-kpi"><div class="l">จุดสั่งซื้อ</div><div class="v">${it.minQty ? fmtQ(it.minQty) + " " + esc(it.unit) : "-"}</div></div></div>
+    ${unitsHint(it) ? `<div class="info-box" style="margin-bottom:12px">หน่วยอื่น: ${esc(unitsHint(it))} — รับเข้า/เบิกเป็นหน่วยเหล่านี้ได้ ระบบแปลงเป็น ${esc(it.unit)} ให้</div>` : ""}
     <div class="section-t">บัตรสต็อก (Stock Card)</div><div class="card tbl-wrap" data-mv>${movesTable(mv, false)}</div>`,
     foot: canEdit("stock") ? `<div class="left"><button class="btn danger" data-del>${icon("trash")} ลบสินค้า</button><button class="btn" data-act>${it.active ? "ปิดใช้งาน" : "เปิดใช้งาน"}</button>${S.adminToken ? `<button class="btn" data-cpy>${icon("copy")} คัดลอกไปสาขาอื่น</button>` : ""}</div><button class="btn" data-in>${icon("income")} รับเข้า</button><button class="btn" data-out>${icon("expense")} เบิกใช้</button><button class="btn primary" data-edit>${icon("edit")} แก้ไข</button>` : `<button class="btn" data-close>ปิด</button>` });
   const done = () => { m.close(); after(); };
@@ -1287,10 +1406,76 @@ async function stockItemDetail(id, after) {
   if (!canEdit("stock")) return;
   $("[data-edit]", m.el).onclick = () => { m.close(); stockItemModal(it, after); };
   const cpy = $("[data-cpy]", m.el); if (cpy) cpy.onclick = () => { m.close(); copyStockModal(S.bid, after, [id]); };
-  $("[data-in]", m.el).onclick = () => { m.close(); stockMoveModal("in", id, after); };
-  $("[data-out]", m.el).onclick = () => { m.close(); stockMoveModal("out", id, after); };
+  $("[data-in]", m.el).onclick = () => { m.close(); stockBatchModal("in", id, after); };
+  $("[data-out]", m.el).onclick = () => { m.close(); stockBatchModal("out", id, after); };
   $("[data-act]", m.el).onclick = async () => { await bapi("PUT", "/stock/items/" + id, { active: !it.active }); S.stockItems = null; toast(it.active ? "ปิดใช้งานแล้ว" : "เปิดใช้งานแล้ว"); done(); };
   $("[data-del]", m.el).onclick = async () => { if (!await confirmBox(`ลบสินค้า “${it.name}” และประวัติความเคลื่อนไหวทั้งหมด?`, { danger: true, okText: "ลบสินค้า" })) return; try { await bapi("DELETE", "/stock/items/" + id); S.stockItems = null; toast("ลบสินค้าแล้ว"); done(); } catch (e) { toast(e.message, "bad"); } };
+}
+/* รับเข้า / ของเสีย / ตรวจนับ / เบิก — เลือกสินค้าแบบแตะการ์ดแยกหมวด (v2.7) */
+const BATCH = { in: { t: "รับเข้า / เติมสินค้า", btn: "บันทึกรับเข้า", q: "จำนวน" }, waste: { t: "บันทึกของเสีย / ทิ้ง", btn: "บันทึกของเสีย", q: "จำนวน" },
+  count: { t: "ตรวจนับสต็อก", btn: "บันทึกยอดนับ", q: "นับได้จริง" }, out: { t: "เบิกใช้", btn: "บันทึกเบิก", q: "จำนวน" } };
+async function stockBatchModal(kind, preId, after) {
+  let items; try { items = (await loadStockItems(true)).filter(i => i.active); } catch (e) { return toast(e.message, "bad"); }
+  if (!items.length) return toast("ยังไม่มีสินค้า — เพิ่มสินค้าก่อน", "bad");
+  const K = BATCH[kind], sel = [], st = { cat: "", q: "" };
+  const add = id => { if (!sel.some(l => l.id === id)) { const it = items.find(i => i.id === id); sel.push({ id, qty: "", unit: it.unit, price: "" }); } };
+  if (preId && items.some(i => i.id === preId)) add(preId);
+  const needAppr = kind !== "out" && !approver("stock");
+  const m = openModal({ title: K.t, size: "xl", sticky: true, body: `
+    ${kind === "in" ? `<div class="info-box" style="margin-bottom:12px">แตะสินค้าด้านล่างเพื่อเพิ่ม แล้วใส่จำนวน · เลือกหน่วย (เช่น ถุง / ลัง) · ราคาต่อหน่วยที่เลือก — ระบบแปลงเป็นหน่วยหลักและคิดต้นทุนให้เอง${needAppr ? " · <b>รายการนี้จะรอผู้จัดการอนุมัติ</b>" : ""}<br><span class="small">ถ้าเป็นการซื้อของ แนะนำบันทึกที่ “รายจ่าย” แล้วผูกสต็อก หรือใช้แท็บ “รายการที่จะซื้อ” จะได้ทั้งบัญชีและสต็อก</span></div>` : ""}
+    ${kind === "count" ? `<div class="info-box" style="margin-bottom:12px">ใส่จำนวนที่นับได้จริง (เลือกหน่วยได้) ระบบจะปรับยอดคงเหลือให้ตรง และบันทึกส่วนต่างไว้${needAppr ? " · <b>รออนุมัติ</b>" : ""}</div>` : ""}
+    ${kind === "waste" && needAppr ? `<div class="info-box" style="margin-bottom:12px">รายการของเสียจะรอผู้จัดการอนุมัติก่อนตัดยอด</div>` : ""}
+    <div class="grid g2"><label class="field"><span>วันที่</span><input type="date" class="input" name="date" value="${today()}"></label><label class="field"><span>หมายเหตุ</span><input class="input" name="note" placeholder="${kind === "in" ? "เช่น ซื้อจากแม็คโคร" : kind === "waste" ? "เช่น เน่าเสีย หมดอายุ" : kind === "count" ? "เช่น นับสิ้นเดือน" : "เช่น เบิกเข้าครัว"}"></label></div>
+    <div class="section-t" style="margin-top:14px">รายการที่เลือก <span class="muted" data-seln></span></div><div data-sel></div>
+    <div class="section-t" style="margin-top:14px">แตะสินค้าเพื่อเพิ่ม</div>
+    <div class="search" style="max-width:none;margin-bottom:8px">${icon("search", "")}<input class="input" data-bq placeholder="ค้นหาสินค้า"></div>
+    <div class="cat-chips" data-bcats></div><div class="bt-grid" data-bgrid></div>`,
+    foot: `${kind === "in" ? `<div class="left bold" data-btotal></div>` : ""}<button class="btn" data-close>ยกเลิก</button><button class="btn primary" data-ok>${icon("check")} ${K.btn}</button>` });
+  const el = m.el;
+  const totalOf = () => sel.reduce((a, l) => { const it = items.find(i => i.id === l.id); const pr = l.price === "" ? it.avgCost * ufOf(it, l.unit) : num(l.price); return a + num(l.qty) * pr; }, 0);
+  const drawTotal = () => { const t = $("[data-btotal]", el); if (t) t.textContent = sel.length ? "รวม " + baht(totalOf()) : ""; };
+  const lineInfo = l => { const it = items.find(i => i.id === l.id), f = ufOf(it, l.unit), bq = num(l.qty) * f;
+    if (kind === "count") return l.qty === "" ? `ในระบบ ${fmtQ(it.qty)} ${esc(it.unit)}` : `ในระบบ ${fmtQ(it.qty)} → ต่าง <b class="${bq - it.qty < 0 ? "neg" : "pos"}">${bq - it.qty > 0 ? "+" : ""}${fmtQ(bq - it.qty)}</b> ${esc(it.unit)}`;
+    if (kind === "in") { const pr = l.price === "" ? it.avgCost * f : num(l.price); return `${f !== 1 && l.qty !== "" ? `= ${fmtQ(bq)} ${esc(it.unit)} · ` : ""}${pr ? `ทุน ${fmt(pr / f)} / ${esc(it.unit)} · ` : ""}รวม <b>${fmt(num(l.qty) * pr)}</b>`; }
+    const over = bq > it.qty + 1e-9; return `${f !== 1 && l.qty !== "" ? `= ${fmtQ(bq)} ${esc(it.unit)} · ` : ""}<span class="${over ? "neg" : ""}">เหลือ ${fmtQ(it.qty)} ${esc(it.unit)}${over ? " — ไม่พอ" : ""}</span>`; };
+  const drawSel = () => {
+    $("[data-seln]", el).textContent = sel.length ? `(${sel.length})` : "";
+    $("[data-sel]", el).innerHTML = sel.length ? sel.map((l, k) => { const it = items.find(i => i.id === l.id); const f = ufOf(it, l.unit);
+      return `<div class="bt-row" data-k="${k}"><div class="bt-top">${it.photoV ? `<span class="q-ph" style="background-image:url('${stockPhoto(it)}')"></span>` : ""}<div class="grow"><b>${esc(it.name)}</b><div class="muted small">${esc(it.category || NOCAT)} · เหลือ ${fmtQ(it.qty)} ${esc(it.unit)}${unitsHint(it) ? " · " + esc(unitsHint(it)) : ""}</div></div><button type="button" class="btn ghost sm icon" data-brm title="เอาออก">${icon("x")}</button></div>
+        <div class="bt-in"><input class="input num" data-bqty inputmode="decimal" value="${esc(l.qty)}" placeholder="${K.q}">${unitSel(it, l.unit, "data-bu")}
+          ${kind === "in" ? `<span class="muted">×</span><input class="input num" data-bpr inputmode="decimal" value="${esc(l.price)}" placeholder="${fmt(it.avgCost * f)}" title="ราคาต่อ ${esc(l.unit)}"><span class="muted small" data-bpu>/ ${esc(l.unit || it.unit)}</span>` : ""}</div>
+        <div class="small muted" data-binfo>${lineInfo(l)}</div></div>`; }).join("") : `<div class="muted small" style="padding:6px 2px">ยังไม่ได้เลือก — แตะการ์ดสินค้าด้านล่าง</div>`;
+    $$(".bt-row", el).forEach(r => { const k = +r.dataset.k, l = sel[k], it = items.find(i => i.id === l.id);
+      const upd = () => { $("[data-binfo]", r).innerHTML = lineInfo(l); drawTotal(); };
+      $("[data-bqty]", r).oninput = e => { l.qty = e.target.value; upd(); };
+      const bu = $("[data-bu]", r); if (bu) bu.onchange = () => { l.unit = bu.value; const pr = $("[data-bpr]", r); if (pr) pr.placeholder = fmt(it.avgCost * ufOf(it, l.unit)); const pu = $("[data-bpu]", r); if (pu) pu.textContent = "/ " + l.unit; upd(); };
+      const pr = $("[data-bpr]", r); if (pr) pr.oninput = e => { l.price = e.target.value; upd(); };
+      $("[data-brm]", r).onclick = () => { sel.splice(k, 1); drawSel(); drawGrid(); }; });
+    drawTotal();
+  };
+  const drawGrid = () => {
+    const q = st.q.toLowerCase();
+    const cats = stockCats(items), cnt = n => items.filter(i => (i.category || NOCAT) === n).length, lowN = items.filter(i => i.low || i.qty <= 0).length;
+    $("[data-bcats]", el).innerHTML = `<button data-bc="" class="${!st.cat ? "on" : ""}">ทั้งหมด <span>${items.length}</span></button>${cats.map(n => `<button data-bc="${esc(n)}" class="${st.cat === n ? "on" : ""}">${esc(n)} <span>${cnt(n)}</span></button>`).join("")}${lowN ? `<button data-bc="__low" class="low ${st.cat === "__low" ? "on" : ""}">⚠ ใกล้หมด <span>${lowN}</span></button>` : ""}`;
+    $$("[data-bc]", el).forEach(b => { b.onclick = () => { st.cat = b.dataset.bc; drawGrid(); }; });
+    const show = items.filter(i => (!q || (i.name + " " + i.sku).toLowerCase().includes(q)) && (!st.cat || (st.cat === "__low" ? (i.low || i.qty <= 0) : (i.category || NOCAT) === st.cat)));
+    const groups = stockCats(show).map(n => ({ n, list: show.filter(i => (i.category || NOCAT) === n) }));
+    $("[data-bgrid]", el).innerHTML = show.length ? groups.map(g => `<div class="q-gh">${esc(g.n)} <span>${g.list.length}</span></div><div class="q-grid">${g.list.map(i => { const on = sel.some(l => l.id === i.id);
+      return `<button type="button" class="q-item bt-card ${i.qty <= 0 ? "out" : i.low ? "low" : ""} ${on ? "sel" : ""}" data-bi="${i.id}">${i.photoV ? `<div class="q-head"><span class="q-ph" style="background-image:url('${stockPhoto(i)}')"></span><div class="q-name">${esc(i.name)}</div></div>` : `<div class="q-name">${esc(i.name)}</div>`}
+        <div class="q-left">เหลือ <b>${fmtQ(i.qty)}</b> ${esc(i.unit)}</div><div class="q-tap">${on ? "✓ เลือกแล้ว" : "+ แตะเพื่อเพิ่ม"}</div></button>`; }).join("")}</div>`).join("") : emptyBox("ไม่พบสินค้า", "stock");
+    $$("[data-bi]", el).forEach(b => { b.onclick = () => { const id = b.dataset.bi; const k = sel.findIndex(l => l.id === id);
+      if (k < 0) { add(id); drawSel(); drawGrid(); const rows = $$(".bt-row", el); const r = rows[rows.length - 1]; if (r) { r.scrollIntoView({ block: "center", behavior: "smooth" }); setTimeout(() => $("[data-bqty]", r).focus({ preventScroll: true }), 250); } }
+      else { const r = $$(".bt-row", el)[k]; if (r) { r.scrollIntoView({ block: "center", behavior: "smooth" }); r.classList.add("flash"); setTimeout(() => r.classList.remove("flash"), 800); } } }; });
+  };
+  $("[data-bq]", el).oninput = debounce(e => { st.q = e.target.value; drawGrid(); }, 150);
+  drawSel(); drawGrid();
+  const ok = $("[data-ok]", el); ok.onclick = () => withBtn(ok, async () => {
+    const lines = sel.filter(l => kind === "count" ? l.qty !== "" : num(l.qty) > 0).map(l => { const it = items.find(i => i.id === l.id);
+      return { itemId: l.id, qty: num(l.qty), unit: l.unit, unitCost: kind === "in" ? (l.price === "" ? r2(it.avgCost * ufOf(it, l.unit)) : num(l.price)) : undefined }; });
+    if (!lines.length) throw new Error("กรุณาเลือกสินค้าและใส่จำนวน");
+    const r = await bapi("POST", "/stock/moves", { kind, date: $("[name=date]", el).value, note: $("[name=note]", el).value, lines });
+    S.stockItems = null; m.close(); toast(r.pending ? "ส่งรออนุมัติแล้ว " + lines.length + " รายการ" : "บันทึกแล้ว " + lines.length + " รายการ"); after();
+  }).catch(() => {});
 }
 async function stockMoveModal(kind, itemId, after) {
   const items = (await loadStockItems()).filter(i => i.active);
@@ -1750,7 +1935,7 @@ BRANCH_PAGES.approvals = { title: () => "รออนุมัติ", async ren
   if (r.approve.stock) html += `<div class="card" style="margin-bottom:14px"><div class="card-h"><h3 class="grow">${icon("stock", "").replace("<svg", '<svg style="width:17px;height:17px;vertical-align:-3px"')} สต็อก <span class="chip warn plain">${r.stock.length}</span></h3>${r.stock.length > 1 ? `<button class="btn sm primary" data-allst>อนุมัติที่เลือก</button><button class="btn sm" data-rjst>ไม่อนุมัติที่เลือก</button>` : ""}</div>
     ${r.stock.length ? `<div class="tbl-wrap"><table class="tbl"><thead><tr><th style="width:30px"><input type="checkbox" data-chkall checked></th><th>วันที่</th><th>สินค้า</th><th>ประเภท</th><th class="num">จำนวน</th><th class="num">คงเหลือตอนนี้</th><th>ผู้บันทึก / หมายเหตุ</th><th></th></tr></thead><tbody>
       ${r.stock.map(m => `<tr><td><input type="checkbox" data-chk="${m.id}" checked></td><td>${thDate(m.date, true)}</td><td class="bold">${esc(m.itemName)}</td><td><span class="chip ${MOVE[m.kind].chip}">${MOVE[m.kind].th}</span></td>
-        <td class="num bold">${m.kind === "count" ? "นับได้ " + fmtQ(m.counted) : (m.qty > 0 ? "+" : "") + fmtQ(m.qty)} <span class="muted small">${esc(m.unit)}</span>${m.kind === "in" && m.unitCost ? `<div class="muted small">@ ${fmt(m.unitCost)}</div>` : ""}</td>
+        <td class="num bold">${m.kind === "count" ? "นับได้ " + fmtQ(m.counted) : (m.qty > 0 ? "+" : "") + fmtQ(m.qty)} <span class="muted small">${esc(m.unit)}</span>${uNote(m)}${m.kind === "in" && m.unitCost ? `<div class="muted small">@ ${fmt(m.unitCost)}</div>` : ""}</td>
         <td class="num">${fmtQ(m.itemQty)}${m.kind === "count" ? `<div class="small ${m.counted - m.itemQty < 0 ? "neg" : "pos"}">ต่าง ${fmtQ(m.counted - m.itemQty)}</div>` : ""}</td><td class="small">${esc(m.createdBy)}<div class="muted">${thDateTime(m.createdAt)}${m.note ? " · " + esc(m.note) : ""}</div></td>
         <td style="white-space:nowrap"><button class="btn sm primary" data-apmove="${m.id}">อนุมัติ</button> <button class="btn sm" data-rjmove="${m.id}">ไม่อนุมัติ</button></td></tr>`).join("")}</tbody></table></div>` : emptyBox("ไม่มีรายการสต็อกรออนุมัติ", "check")}</div>`;
   if (r.approve.leave) html += `<div class="card" style="margin-bottom:14px"><div class="card-h"><h3 class="grow">${icon("calendar", "").replace("<svg", '<svg style="width:17px;height:17px;vertical-align:-3px"')} ขาด-ลา <span class="chip warn plain">${r.leaves.length}</span></h3></div>

@@ -434,3 +434,32 @@ label.disabled { opacity: .5; pointer-events: none; }
 @media (max-width: 600px) { .list-row { flex-wrap: wrap; gap: 8px; padding: 10px 12px; } .list-row > .grow, .list-row > div:first-child { min-width: 55%; } }
 .sp-item .sp-ph { height: 40px; max-height: 40px; align-self: center; }
 .d-cell .bold { min-width: 110px; }
+
+/* ===== v2.7: หลายหน่วย / รับเข้าแบบแยกหมวด / รายการที่จะซื้อ ===== */
+.u-sel { width: auto; min-width: 70px; max-width: 150px; height: 34px; font-size: 13px; padding: 0 26px 0 8px; }
+.u-txt { font-size: 13px; color: var(--text-2); white-space: nowrap; }
+.q-unit { margin-top: 6px; } .q-unit .u-sel { width: 100%; max-width: none; }
+.units-ed { border: 1px dashed var(--border); border-radius: 10px; padding: 10px 12px; background: #fafbfd; }
+.u-row { display: flex; align-items: center; gap: 6px; margin: 8px 0; flex-wrap: wrap; }
+.u-row .input { width: 110px; } .u-row .input.num { width: 80px; } .u-row .u-base { font-size: 13px; color: var(--text-2); min-width: 40px; }
+.bt-row { border: 1.5px solid var(--border); border-radius: 12px; padding: 10px 12px; margin-bottom: 8px; background: #fff; transition: box-shadow .3s; }
+.bt-row.flash { box-shadow: 0 0 0 3px var(--primary-100); border-color: var(--primary); }
+.bt-top { display: flex; align-items: center; gap: 10px; }
+.bt-in { display: flex; align-items: center; gap: 6px; margin: 8px 0 4px; flex-wrap: wrap; }
+.bt-in .input.num { width: 100px; height: 38px; }
+.bt-in .u-sel { height: 38px; }
+.bt-grid .q-grid { margin-bottom: 10px; }
+button.bt-card { text-align: left; font: inherit; color: inherit; width: 100%; }
+.bt-card .q-tap { font-size: 12px; }
+.sh-head { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
+.sh-group { margin-bottom: 12px; }
+.sh-card { padding: 2px 0; }
+.sh-row { display: flex; align-items: center; gap: 12px; padding: 11px 14px; border-bottom: 1px solid #eff1f5; cursor: pointer; }
+.sh-row:last-child { border-bottom: 0; }
+.sh-row.done { cursor: default; background: #fbfcfd; }
+.sh-row.done .sh-name { text-decoration: line-through; color: var(--muted); }
+.sh-name { font-weight: 600; font-size: 15px; }
+.sh-box { flex: 0 0 auto; width: 28px; height: 28px; border-radius: 8px; border: 2px solid #b9c3d3; background: #fff; cursor: pointer; display: grid; place-items: center; font-weight: 700; color: #fff; padding: 0; }
+.sh-box:hover { border-color: var(--primary); }
+.sh-box.on { background: var(--good, #1a7f4b); border-color: var(--good, #1a7f4b); cursor: default; }
+@media (max-width: 600px) { .bt-in .input.num { width: 84px; } .sh-row { padding: 11px 10px; gap: 10px; } }
