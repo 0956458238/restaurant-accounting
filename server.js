@@ -13,7 +13,7 @@ const crypto = require("crypto");
 const { Pool } = require("pg");
 
 const PORT = Number(process.env.PORT) || 3000;
-const BUILD_ID = "2.4.1";
+const BUILD_ID = "2.5.0";
 const INIT_ADMIN_USER = String(process.env.ADMIN_USER || "admin").trim();
 const INIT_ADMIN_PASS = String(process.env.ADMIN_PASS || "admin1234");
 const PUBLIC_DIR = path.join(__dirname, "public");
@@ -889,11 +889,14 @@ async function listOpAll(bids, op, kind, a) {
   }
   return changed;
 }
+// จัดการหมวดสต็อกจากหน้าสต็อกได้: ผู้มีสิทธิ์ตั้งค่าหมวด หรือ ผู้แก้ไขสต็อกที่เป็นผู้อนุมัติสต็อก
+const canManageList = (ctx, kind) => can(ctx, "settings", "edit") || ((kind === "stock_category" || kind === "unit") && can(ctx, "stock", "edit") && !!ctx.perms.approve.stock);
 route("PUT", B + "/lists/:id", async ctx => {
-  await needBranch(ctx, "settings", "edit");
+  await needBranch(ctx);
   const cur = await pool.query("SELECT * FROM lists WHERE id=$1 AND branch_id=$2", [ctx.params.id, ctx.branch.id]);
   if (!cur.rows[0]) throw new HttpError(404, "ไม่พบรายการ");
   const L = cur.rows[0];
+  if (!canManageList(ctx, L.kind)) need(ctx, "settings", "edit");
   const bids = await syncBranchIds(ctx.branch.id);
   const many = bids.length > 1 ? " (ทุกสาขา)" : "";
   if (ctx.body.fsGroup !== undefined && FS_GROUPS[L.kind]) {
@@ -930,10 +933,16 @@ route("PUT", B + "/lists/:id", async ctx => {
   return { ok: true };
 });
 route("DELETE", B + "/lists/:id", async ctx => {
-  await needBranch(ctx, "settings", "edit");
+  await needBranch(ctx);
   const L = (await pool.query("SELECT * FROM lists WHERE id=$1 AND branch_id=$2", [ctx.params.id, ctx.branch.id])).rows[0];
   if (!L) return { ok: true };
+  if (!canManageList(ctx, L.kind)) need(ctx, "settings", "edit");
   const bids = await syncBranchIds(ctx.branch.id);
+  // ลบหมวดสต็อก: ย้ายสินค้าในหมวดนี้ไปหมวดอื่น (หรือ "ไม่ระบุหมวด")
+  if (L.kind === "stock_category" && ctx.query.moveTo !== undefined) {
+    const to = str(ctx.query.moveTo, 120);
+    await pool.query("UPDATE stock_items SET category=$1, updated_at=$2 WHERE branch_id = ANY($3::text[]) AND category=$4", [to, now(), pgArr(bids), L.name]);
+  }
   await listOpAll(bids, "delete", L.kind, { name: L.name });
   await logActivity(ctx, "list_delete", "ลบ " + L.name + (bids.length > 1 ? " (ทุกสาขา)" : ""), ctx.branch.id);
   return { ok: true };
@@ -1494,11 +1503,20 @@ route("DELETE", B + "/stock/items/:id", async ctx => {
   return { ok: true };
 });
 const MOVE_KINDS = { in: "รับเข้า", out: "เบิกใช้", waste: "ของเสีย / ทิ้ง", count: "ตรวจนับ (ปรับยอด)" };
-function moveOut(m) {
+// แก้ไข/ลบรายการสต็อกได้ไหม: ผู้อนุมัติ = ทุกรายการ (ยกเว้นที่มาจากเอกสารซื้อ) · พนักงาน = การเบิกของตัวเองภายในวันเดียวกัน หรือรายการของตัวเองที่ยังรออนุมัติ/ไม่อนุมัติ
+function moveEditable(ctx, m) {
+  if (m.ref_record_id) return false;
+  if (ctx.perms.approve.stock) return true;
+  if (!can(ctx, "stock", "edit") || m.created_by !== ctx.session.actor) return false;
+  if (m.status !== "approved") return true;
+  return m.kind === "out" && bkkDateOf(Number(m.created_at)) === todayBkk();
+}
+function moveOut(m, ctx) {
   return { id: m.id, itemId: m.item_id, itemName: m.item_name, unit: m.unit || "", date: m.move_date, kind: m.kind, qty: Number(m.qty),
     counted: m.counted == null ? null : Number(m.counted), unitCost: Number(m.unit_cost) || 0, amount: Number(m.amount) || 0, balance: Number(m.balance) || 0,
     note: m.note || "", refRecordId: m.ref_record_id || "", docNo: m.doc_no || "", batchId: m.batch_id || "", createdBy: m.created_by || "", createdAt: Number(m.created_at),
-    status: m.status || "approved", approvedBy: m.approved_by || "", approvedAt: Number(m.approved_at) || null, rejectReason: m.reject_reason || "", itemQty: m.item_qty == null ? null : Number(m.item_qty) };
+    status: m.status || "approved", approvedBy: m.approved_by || "", approvedAt: Number(m.approved_at) || null, rejectReason: m.reject_reason || "", itemQty: m.item_qty == null ? null : Number(m.item_qty),
+    canEdit: ctx ? moveEditable(ctx, m) : false };
 }
 route("GET", B + "/stock/moves", async ctx => {
   await needBranch(ctx, "stock", "view");
@@ -1509,7 +1527,35 @@ route("GET", B + "/stock/moves", async ctx => {
   if (["pending", "approved", "rejected"].includes(ctx.query.status)) { params.push(ctx.query.status); where += " AND m.status=$" + params.length; }
   const { rows } = await pool.query(`SELECT m.*, i.name AS item_name, i.unit, r.doc_no FROM stock_moves m JOIN stock_items i ON i.id=m.item_id LEFT JOIN records r ON r.id=m.ref_record_id
     WHERE ${where} ORDER BY m.move_date DESC, m.created_at DESC LIMIT 3000`, params);
-  return { from, to, moves: rows.map(moveOut), canApprove: !!ctx.perms.approve.stock };
+  return { from, to, moves: rows.map(m => moveOut(m, ctx)), canApprove: !!ctx.perms.approve.stock };
+});
+// การเบิกล่าสุด (แสดงด้านบนหน้าสต็อก): วันนี้ + เมื่อวาน
+route("GET", B + "/stock/recent", async ctx => {
+  await needBranch(ctx, "stock", "view");
+  const y = new Date(Date.now() + 7 * 3600000 - 86400000).toISOString().slice(0, 10);
+  const { rows } = await pool.query(`SELECT m.*, i.name AS item_name, i.unit, i.qty AS item_qty FROM stock_moves m JOIN stock_items i ON i.id=m.item_id
+    WHERE m.branch_id=$1 AND m.kind='out' AND m.move_date>=$2 ORDER BY m.created_at DESC LIMIT 40`, [ctx.branch.id, y]);
+  return { moves: rows.map(m => moveOut(m, ctx)), today: todayBkk() };
+});
+// แก้ไขรายการสต็อก (จำนวน / หมายเหตุ)
+route("PUT", B + "/stock/moves/:id", async ctx => {
+  await needBranch(ctx, "stock", "edit");
+  const m = (await pool.query("SELECT m.*, i.name, i.qty AS item_qty, i.unit FROM stock_moves m JOIN stock_items i ON i.id=m.item_id WHERE m.id=$1 AND m.branch_id=$2", [ctx.params.id, ctx.branch.id])).rows[0];
+  if (!m) throw new HttpError(404, "ไม่พบรายการ");
+  if (m.ref_record_id) throw bad("รายการนี้มาจากเอกสารซื้อ — แก้ไขที่เอกสารรายจ่ายแทน");
+  if (!moveEditable(ctx, m)) throw new HttpError(403, "แก้ไขได้เฉพาะการเบิกของตัวเองภายในวันเดียวกัน (รายการอื่นให้ผู้จัดการแก้)");
+  const q = r4(num(ctx.body.qty, NaN));
+  if (m.kind === "count" ? !(q >= 0) : !(q > 0)) throw bad(m.kind === "count" ? "ยอดที่นับได้ต้องเป็น 0 ขึ้นไป" : "จำนวนต้องมากกว่า 0");
+  const old = m.kind === "count" ? Number(m.counted) : Math.abs(Number(m.qty));
+  if ((m.kind === "out" || m.kind === "waste") && m.status === "approved") {
+    const avail = Number(m.item_qty) + old;
+    if (q > avail + 1e-9 && !ctx.body.allowNegative) throw bad("\"" + m.name + "\" คงเหลือ " + r4(avail) + " " + (m.unit || "") + " ไม่พอเบิก " + q);
+  }
+  const signed = m.kind === "in" ? q : m.kind === "count" ? 0 : -q;
+  await pool.query("UPDATE stock_moves SET qty=$1, counted=$2, note=$3 WHERE id=$4", [signed, m.kind === "count" ? q : null, ctx.body.note !== undefined ? str(ctx.body.note, 300) : m.note, m.id]);
+  if (m.status === "approved") await recomputeItem(m.item_id);
+  await logActivity(ctx, "stock_move_edit", "แก้ไข" + MOVE_KINDS[m.kind] + " " + m.name + " จาก " + old + " เป็น " + q + " " + (m.unit || "") + " (รายการวันที่ " + m.move_date + ")", ctx.branch.id);
+  return { ok: true };
 });
 route("POST", B + "/stock/moves", async ctx => {
   await needBranch(ctx, "stock", "edit");
@@ -1519,7 +1565,8 @@ route("POST", B + "/stock/moves", async ctx => {
   const lines = (Array.isArray(b.lines) ? b.lines : []).filter(l => l && l.itemId).slice(0, 200);
   if (!lines.length) throw bad("กรุณาเลือกสินค้าอย่างน้อย 1 รายการ");
   const batch = uid(); const note = str(b.note, 300);
-  const approver = !!ctx.perms.approve.stock;
+  // เบิกใช้ = ตัดยอดทันที ไม่ต้องอนุมัติ · รับเข้า / ของเสีย / ตรวจนับ ของคนที่ไม่มีสิทธิ์อนุมัติ = รออนุมัติ
+  const approver = !!ctx.perms.approve.stock || kind === "out";
   const items = {};
   for (const l of lines) {
     const it = await pool.query("SELECT * FROM stock_items WHERE id=$1 AND branch_id=$2", [l.itemId, ctx.branch.id]);
@@ -1564,7 +1611,7 @@ route("DELETE", B + "/stock/moves/:id", async ctx => {
   const { rows } = await pool.query("SELECT m.*, i.name FROM stock_moves m JOIN stock_items i ON i.id=m.item_id WHERE m.id=$1 AND m.branch_id=$2", [ctx.params.id, ctx.branch.id]);
   if (!rows[0]) throw new HttpError(404, "ไม่พบรายการ");
   if (rows[0].ref_record_id) throw bad("รายการนี้มาจากเอกสารซื้อ — แก้ไข/ลบที่เอกสารรายจ่ายแทน");
-  if (rows[0].status === "approved" && !ctx.perms.approve.stock) throw new HttpError(403, "รายการที่อนุมัติแล้ว ลบได้เฉพาะผู้อนุมัติสต็อก");
+  if (!moveEditable(ctx, rows[0])) throw new HttpError(403, rows[0].kind === "out" ? "ลบได้เฉพาะการเบิกของตัวเองภายในวันเดียวกัน (รายการอื่นให้ผู้จัดการลบ)" : "รายการที่อนุมัติแล้ว ลบได้เฉพาะผู้อนุมัติสต็อก");
   await pool.query("DELETE FROM stock_moves WHERE id=$1", [rows[0].id]);
   await recomputeItem(rows[0].item_id);
   await logActivity(ctx, "stock_move_delete", "ลบรายการสต็อก " + MOVE_KINDS[rows[0].kind] + " " + rows[0].name + (rows[0].status !== "approved" ? " (" + (rows[0].status === "pending" ? "รออนุมัติ" : "ไม่อนุมัติ") + ")" : ""), ctx.branch.id);
@@ -1979,7 +2026,7 @@ route("GET", B + "/approvals", async ctx => {
   if (!ap.stock && !ap.leave && !ap.advance) throw new HttpError(403, "ไม่มีสิทธิ์อนุมัติรายการใด");
   const out = { approve: ap };
   if (ap.stock) out.stock = (await pool.query(`SELECT m.*, i.name AS item_name, i.unit, i.qty AS item_qty FROM stock_moves m JOIN stock_items i ON i.id=m.item_id
-    WHERE m.branch_id=$1 AND m.status='pending' ORDER BY m.move_date, m.created_at`, [bid])).rows.map(moveOut);
+    WHERE m.branch_id=$1 AND m.status='pending' ORDER BY m.move_date, m.created_at`, [bid])).rows.map(m => moveOut(m, ctx));
   if (ap.leave) out.leaves = (await pool.query("SELECT * FROM leaves WHERE branch_id=$1 AND status='pending' ORDER BY date_from, created_at", [bid])).rows.map(leaveOut);
   if (ap.advance) out.advances = (await pool.query("SELECT * FROM advances WHERE branch_id=$1 AND status='pending' ORDER BY req_date, created_at", [bid])).rows.map(advOut);
   return out;
