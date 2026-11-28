@@ -13,7 +13,7 @@ const crypto = require("crypto");
 const { Pool } = require("pg");
 
 const PORT = Number(process.env.PORT) || 3000;
-const BUILD_ID = "3.0.0";
+const BUILD_ID = "3.1.0";
 const INIT_ADMIN_USER = String(process.env.ADMIN_USER || "admin").trim();
 const INIT_ADMIN_PASS = String(process.env.ADMIN_PASS || "admin1234");
 const PUBLIC_DIR = path.join(__dirname, "public");
@@ -1648,7 +1648,304 @@ QRCode.createBytes = function(buffer, rsBlocks) {
     for (var r = 0; r < n; r++) for (var c = 0; c < n; c++) if (q.isDark(r, c)) d += "M" + (c + m) + " " + (r + m) + "h1v1h-1z";
     return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ' + s + ' ' + s + '" shape-rendering="crispEdges"><rect width="100%" height="100%" fill="#fff"/><path d="' + d + '" fill="#000"/></svg>';
   }
-  return { svg: svg, QRCode: QRCode, L: QRErrorCorrectLevel };
+  // ---------- ตัวอ่าน QR จากรูป (v3.1) — ใช้ได้ทุกเครื่อง เพราะอ่านที่เซิร์ฟเวอร์ ----------
+  // รับภาพขาวดำ (gray 0-255 ทีละพิกเซล) → คืนข้อความใน QR หรือ null
+  var GF_EXP = new Array(512), GF_LOG = new Array(256);
+  (function () { var x = 1; for (var i = 0; i < 255; i++) { GF_EXP[i] = x; GF_LOG[x] = i; x <<= 1; if (x & 256) x ^= 0x11d; } for (var j = 255; j < 512; j++) GF_EXP[j] = GF_EXP[j - 255]; })();
+  function gmul(a, b) { return a === 0 || b === 0 ? 0 : GF_EXP[GF_LOG[a] + GF_LOG[b]]; }
+  function gdiv(a, b) { if (b === 0) throw new Error("div0"); return a === 0 ? 0 : GF_EXP[(GF_LOG[a] + 255 - GF_LOG[b]) % 255]; }
+  function gpow(x, p) { return GF_EXP[(((GF_LOG[x] * p) % 255) + 255) % 255]; }
+  function ginv(x) { return GF_EXP[255 - GF_LOG[x]]; }
+  function pScale(p, x) { return p.map(function (c) { return gmul(c, x); }); }
+  function pAdd(p, q) { var n = Math.max(p.length, q.length), r = new Array(n).fill(0), i; for (i = 0; i < p.length; i++) r[i + n - p.length] = p[i]; for (i = 0; i < q.length; i++) r[i + n - q.length] ^= q[i]; return r; }
+  function pMul(p, q) { var r = new Array(p.length + q.length - 1).fill(0); for (var j = 0; j < q.length; j++) for (var i = 0; i < p.length; i++) r[i + j] ^= gmul(p[i], q[j]); return r; }
+  function pEval(p, x) { var y = p[0]; for (var i = 1; i < p.length; i++) y = gmul(y, x) ^ p[i]; return y; }
+  function pDivRem(dividend, divisor) {
+    var out = dividend.slice();
+    for (var i = 0; i < dividend.length - (divisor.length - 1); i++) { var c = out[i]; if (c !== 0) for (var j = 1; j < divisor.length; j++) if (divisor[j] !== 0) out[i + j] ^= gmul(divisor[j], c); }
+    return out.slice(out.length - (divisor.length - 1));
+  }
+  // แก้ข้อผิดพลาดแบบ Reed-Solomon (ช่วยเมื่อมีโลโก้ทับกลาง QR หรือรูปไม่ชัด)
+  function rsCorrect(msg, nsym) {
+    var synd = [0], i, j, bad = false;
+    for (i = 0; i < nsym; i++) { synd.push(pEval(msg, gpow(2, i))); if (synd[i + 1]) bad = true; }
+    if (!bad) return msg;
+    var errLoc = [1], oldLoc = [1];
+    for (i = 0; i < nsym; i++) {
+      var K = i + 1, delta = synd[K];
+      for (j = 1; j < errLoc.length; j++) delta ^= gmul(errLoc[errLoc.length - 1 - j], synd[K - j]);
+      oldLoc = oldLoc.concat([0]);
+      if (delta !== 0) {
+        if (oldLoc.length > errLoc.length) { var nl = pScale(oldLoc, delta); oldLoc = pScale(errLoc, ginv(delta)); errLoc = nl; }
+        errLoc = pAdd(errLoc, pScale(oldLoc, delta));
+      }
+    }
+    while (errLoc.length && errLoc[0] === 0) errLoc.shift();
+    var errs = errLoc.length - 1;
+    if (errs * 2 > nsym) return null;
+    var rev = errLoc.slice().reverse(), pos = [];
+    for (i = 0; i < msg.length; i++) if (pEval(rev, gpow(2, i)) === 0) pos.push(msg.length - 1 - i);
+    if (pos.length !== errs) return null;
+    var coef = pos.map(function (p) { return msg.length - 1 - p; });
+    var eLoc = [1];
+    coef.forEach(function (c) { eLoc = pMul(eLoc, pAdd([1], [gpow(2, c), 0])); });
+    var sr = synd.slice().reverse();
+    var prod = pMul(sr, eLoc), divisor = [1].concat(new Array(eLoc.length).fill(0));
+    var eval_ = pDivRem(prod, divisor).reverse();
+    var X = coef.map(function (c) { return gpow(2, -(255 - c)); });
+    var out = msg.slice();
+    for (i = 0; i < X.length; i++) {
+      var Xi = X[i], Xinv = ginv(Xi), lp = 1;
+      for (j = 0; j < X.length; j++) if (j !== i) lp = gmul(lp, 1 ^ gmul(Xinv, X[j]));
+      if (lp === 0) return null;
+      var y = gmul(Xi, pEval(eval_.slice().reverse(), Xinv));
+      out[pos[i]] ^= gdiv(y, lp);
+    }
+    for (i = 0; i < nsym; i++) if (pEval(out, gpow(2, i))) return null;
+    return out;
+  }
+
+  function binarize(gray, w, h, kind) {
+    var bin = new Uint8Array(w * h), i;
+    if (kind === "otsu") {
+      var hist = new Array(256).fill(0); for (i = 0; i < gray.length; i++) hist[gray[i]]++;
+      var tot = gray.length, sum = 0; for (i = 0; i < 256; i++) sum += i * hist[i];
+      var sB = 0, wB = 0, best = 0, th = 128;
+      for (i = 0; i < 256; i++) { wB += hist[i]; if (!wB) continue; var wF = tot - wB; if (!wF) break; sB += i * hist[i]; var mB = sB / wB, mF = (sum - sB) / wF, v = wB * wF * (mB - mF) * (mB - mF); if (v > best) { best = v; th = i; } }
+      for (i = 0; i < gray.length; i++) bin[i] = gray[i] <= th ? 1 : 0;
+      return bin;
+    }
+    // แบบปรับตามพื้นที่ (เหมาะกับรูปถ่ายที่แสงไม่เท่ากัน)
+    var W = w + 1, integ = new Float64Array(W * (h + 1)), x, y;
+    for (y = 0; y < h; y++) { var row = 0; for (x = 0; x < w; x++) { row += gray[y * w + x]; integ[(y + 1) * W + x + 1] = integ[y * W + x + 1] + row; } }
+    var r = Math.max(7, Math.round(Math.min(w, h) / (kind === "local2" ? 10 : 20)));
+    for (y = 0; y < h; y++) {
+      var y0 = Math.max(0, y - r), y1 = Math.min(h, y + r + 1);
+      for (x = 0; x < w; x++) {
+        var x0 = Math.max(0, x - r), x1 = Math.min(w, x + r + 1);
+        var s = integ[y1 * W + x1] - integ[y0 * W + x1] - integ[y1 * W + x0] + integ[y0 * W + x0];
+        var mean = s / ((y1 - y0) * (x1 - x0)), g = gray[y * w + x];
+        bin[y * w + x] = (g < mean - 6 || (g < 60)) ? 1 : 0;
+      }
+    }
+    return bin;
+  }
+
+  function ratioOk(c, strict) {
+    var t = c[0] + c[1] + c[2] + c[3] + c[4]; if (t < 7) return false;
+    var m = t / 7, v = m * (strict ? 0.5 : 0.75);
+    return Math.abs(m - c[0]) < v && Math.abs(m - c[1]) < v && Math.abs(3 * m - c[2]) < 3 * v && Math.abs(m - c[3]) < v && Math.abs(m - c[4]) < v;
+  }
+  // นับช่วง ดำ-ขาว-ดำ-ขาว-ดำ ผ่านจุดกึ่งกลาง ตามแนวที่กำหนด
+  function crossCount(bin, w, h, cx, cy, dx, dy, maxRun) {
+    var px = function (k) { var x = Math.round(cx + dx * k), y = Math.round(cy + dy * k); if (x < 0 || y < 0 || x >= w || y >= h) return -1; return bin[y * w + x]; };
+    if (px(0) !== 1) return null;
+    var c = [0, 0, 0, 0, 0], k = 0;
+    while (px(k) === 1) { c[2]++; k--; }
+    var neg = k;
+    while (px(k) === 0 && c[1] <= maxRun) { c[1]++; k--; }
+    while (px(k) === 1 && c[0] <= maxRun) { c[0]++; k--; }
+    k = 1; while (px(k) === 1) { c[2]++; k++; }
+    var posc = k;
+    while (px(k) === 0 && c[3] <= maxRun) { c[3]++; k++; }
+    while (px(k) === 1 && c[4] <= maxRun) { c[4]++; k++; }
+    if (!c[0] || !c[1] || !c[3] || !c[4]) return null;
+    return { c: c, center: (neg + 1 + posc - 1) / 2, total: c[0] + c[1] + c[2] + c[3] + c[4] };
+  }
+
+  function findFinders(bin, w, h) {
+    var cands = [], step = h > 900 ? 2 : 1;
+    for (var y = 0; y < h; y += step) {
+      var runs = [], col = bin[y * w], start = 0;
+      for (var x = 1; x <= w; x++) { var v = x < w ? bin[y * w + x] : -1; if (v !== col) { runs.push([start, x - start, col]); start = x; col = v; } }
+      for (var i = 0; i + 4 < runs.length; i++) {
+        if (runs[i][2] !== 1) continue;
+        var c = [runs[i][1], runs[i + 1][1], runs[i + 2][1], runs[i + 3][1], runs[i + 4][1]];
+        if (!ratioOk(c, false)) continue;
+        var tot = c[0] + c[1] + c[2] + c[3] + c[4];
+        var cx = runs[i + 2][0] + runs[i + 2][1] / 2 - 0.5;
+        var vc = crossCount(bin, w, h, cx, y, 0, 1, tot);
+        if (!vc || !ratioOk(vc.c, false) || Math.abs(vc.total - tot) > tot * 0.6) continue;
+        var cy = y + vc.center;
+        var hc = crossCount(bin, w, h, cx, cy, 1, 0, tot);
+        if (!hc || !ratioOk(hc.c, false)) continue;
+        cx = cx + hc.center;
+        // ตรวจแนวทแยงเพื่อกันจับผิด
+        var dc = crossCount(bin, w, h, cx, cy, 1, 1, tot);
+        if (!dc || !ratioOk(dc.c, false)) continue;
+        cands.push({ x: cx, y: cy, ms: (hc.total + vc.total) / 14, n: 1 });
+      }
+    }
+    var cl = [];
+    cands.forEach(function (p) {
+      for (var j = 0; j < cl.length; j++) { var q = cl[j]; if (Math.abs(q.x - p.x) <= q.ms * 2 && Math.abs(q.y - p.y) <= q.ms * 2 && Math.abs(q.ms - p.ms) <= Math.max(q.ms, p.ms) * 0.5) { q.x = (q.x * q.n + p.x) / (q.n + 1); q.y = (q.y * q.n + p.y) / (q.n + 1); q.ms = (q.ms * q.n + p.ms) / (q.n + 1); q.n++; return; } }
+      cl.push({ x: p.x, y: p.y, ms: p.ms, n: 1 });
+    });
+    cl.sort(function (a, b) { return b.n - a.n; });
+    return cl.slice(0, 10);
+  }
+
+  function dist(a, b) { return Math.hypot(a.x - b.x, a.y - b.y); }
+  function triples(cl) {
+    var out = [];
+    for (var a = 0; a < cl.length; a++) for (var b = a + 1; b < cl.length; b++) for (var c = b + 1; c < cl.length; c++) {
+      var P = [cl[a], cl[b], cl[c]], ms = P.map(function (p) { return p.ms; });
+      if (Math.max.apply(null, ms) / Math.min.apply(null, ms) > 1.6) continue;
+      var d01 = dist(P[0], P[1]), d12 = dist(P[1], P[2]), d02 = dist(P[0], P[2]), tl, tr, bl;
+      if (d12 >= d01 && d12 >= d02) { tl = P[0]; tr = P[1]; bl = P[2]; }
+      else if (d02 >= d01 && d02 >= d12) { tl = P[1]; tr = P[0]; bl = P[2]; }
+      else { tl = P[2]; tr = P[0]; bl = P[1]; }
+      if ((tr.x - tl.x) * (bl.y - tl.y) - (tr.y - tl.y) * (bl.x - tl.x) < 0) { var t = tr; tr = bl; bl = t; }
+      var A = dist(tl, tr), Bd = dist(tl, bl), C = dist(tr, bl);
+      if (Math.abs(A - Bd) / Math.max(A, Bd) > 0.35) continue;
+      var hyp = Math.hypot(A, Bd); if (Math.abs(C - hyp) / hyp > 0.25) continue;
+      var msAvg = (tl.ms + tr.ms + bl.ms) / 3;
+      if (A / msAvg < 12) continue;
+      out.push({ tl: tl, tr: tr, bl: bl, ms: msAvg, score: tl.n + tr.n + bl.n - 20 * Math.abs(A - Bd) / Math.max(A, Bd) });
+    }
+    out.sort(function (x, y) { return y.score - x.score; });
+    return out.slice(0, 6);
+  }
+
+  function s2q(x0, y0, x1, y1, x2, y2, x3, y3) {
+    var dx3 = x0 - x1 + x2 - x3, dy3 = y0 - y1 + y2 - y3;
+    if (Math.abs(dx3) < 1e-9 && Math.abs(dy3) < 1e-9) return [[x1 - x0, x2 - x1, x0], [y1 - y0, y2 - y1, y0], [0, 0, 1]];
+    var dx1 = x1 - x2, dx2 = x3 - x2, dy1 = y1 - y2, dy2 = y3 - y2, den = dx1 * dy2 - dx2 * dy1;
+    var a13 = (dx3 * dy2 - dx2 * dy3) / den, a23 = (dx1 * dy3 - dx3 * dy1) / den;
+    return [[x1 - x0 + a13 * x1, x3 - x0 + a23 * x3, x0], [y1 - y0 + a13 * y1, y3 - y0 + a23 * y3, y0], [a13, a23, 1]];
+  }
+  function inv3(m) {
+    var a = m[0][0], b = m[0][1], c = m[0][2], d = m[1][0], e = m[1][1], f = m[1][2], g = m[2][0], h = m[2][1], i = m[2][2];
+    return [[e * i - f * h, c * h - b * i, b * f - c * e], [f * g - d * i, a * i - c * g, c * d - a * f], [d * h - e * g, b * g - a * h, a * e - b * d]];
+  }
+  function mul3(A, B) { var r = [[0, 0, 0], [0, 0, 0], [0, 0, 0]]; for (var i = 0; i < 3; i++) for (var j = 0; j < 3; j++) for (var k = 0; k < 3; k++) r[i][j] += A[i][k] * B[k][j]; return r; }
+  function transformFor(src, dst) { // src/dst: 4 จุด [x,y]
+    var Ms = s2q(src[0][0], src[0][1], src[1][0], src[1][1], src[2][0], src[2][1], src[3][0], src[3][1]);
+    var Md = s2q(dst[0][0], dst[0][1], dst[1][0], dst[1][1], dst[2][0], dst[2][1], dst[3][0], dst[3][1]);
+    var M = mul3(Md, inv3(Ms));
+    return function (u, v) { var z = M[2][0] * u + M[2][1] * v + M[2][2]; return [(M[0][0] * u + M[0][1] * v + M[0][2]) / z, (M[1][0] * u + M[1][1] * v + M[1][2]) / z]; };
+  }
+
+  function findAlign(bin, w, h, est, ux, uy) {
+    var at = function (x, y) { x = Math.round(x); y = Math.round(y); return x < 0 || y < 0 || x >= w || y >= h ? -1 : bin[y * w + x]; };
+    var ms = Math.hypot(ux[0], ux[1]), R = ms * 9, st = Math.max(1, ms / 3), best = null;
+    var scales = [1, 0.8, 1.2, 0.65, 1.4];
+    for (var dy = -R; dy <= R; dy += st) for (var dx = -R; dx <= R; dx += st) {
+      var px = est[0] + dx, py = est[1] + dy, sc = 0;
+      if (at(px, py) !== 1) continue;
+      for (var si = 0; si < scales.length; si++) {
+        var f = scales[si], s1 = 1;
+        for (var a = -2; a <= 2; a++) for (var b = -2; b <= 2; b++) {
+          if (!a && !b) continue;
+          var ring = Math.max(Math.abs(a), Math.abs(b)), want = ring === 2 ? 1 : 0;
+          if (at(px + f * (a * ux[0] + b * uy[0]), py + f * (a * ux[1] + b * uy[1])) === want) s1++;
+        }
+        if (s1 > sc) sc = s1;
+      }
+      var d = Math.hypot(dx, dy);
+      if (!best || sc > best.sc || (sc === best.sc && d < best.d)) best = { x: px, y: py, sc: sc, d: d };
+    }
+    return best && best.sc >= 22 ? best : null;
+  }
+
+  function readGrid(bin, w, h, T, n) {
+    var g = [];
+    for (var r = 0; r < n; r++) { var row = []; for (var c = 0; c < n; c++) { var p = T(c + 0.5, r + 0.5), x = Math.round(p[0]), y = Math.round(p[1]); row.push(x >= 0 && y >= 0 && x < w && y < h ? bin[y * w + x] === 1 : false); } g.push(row); }
+    return g;
+  }
+
+  function bitCount(x) { var c = 0; while (x) { c += x & 1; x >>>= 1; } return c; }
+  var ECLS = [1, 0, 3, 2];
+  function decodeGrid(g) {
+    var n = g.length, ver = (n - 17) / 4; if (ver < 1 || ver > 40 || ver % 1) return null;
+    var a = 0, b = 0, v, hh;
+    for (v = 0; v < 15; v++) { var r1 = v < 6 ? v : v < 8 ? v + 1 : n - 15 + v; if (g[r1][8]) a |= 1 << v; }
+    for (hh = 0; hh < 15; hh++) { var c1 = hh < 8 ? n - hh - 1 : hh < 9 ? 7 : 15 - hh - 1; if (g[8][c1]) b |= 1 << hh; }
+    var best = null;
+    ECLS.forEach(function (ecl) { for (var mk = 0; mk < 8; mk++) { var bits = QRUtil.getBCHTypeInfo((ecl << 3) | mk), d = Math.min(bitCount(bits ^ a), bitCount(bits ^ b)); if (!best || d < best.d) best = { d: d, ecl: ecl, mk: mk }; } });
+    if (!best || best.d > 3) return null;
+    var q = new QRCode(ver, best.ecl); q.moduleCount = n; q.modules = [];
+    for (var i = 0; i < n; i++) q.modules.push(new Array(n).fill(null));
+    q.setupPositionProbePattern(0, 0); q.setupPositionProbePattern(n - 7, 0); q.setupPositionProbePattern(0, n - 7);
+    q.setupPositionAdjustPattern(); q.setupTimingPattern(); q.setupTypeInfo(true, best.mk); if (ver >= 7) q.setupTypeNumber(true);
+    var bytes = [], cur = 0, nb = 0, inc = -1, row = n - 1;
+    for (var col = n - 1; col > 0; col -= 2) {
+      if (col === 6) col--;
+      while (true) {
+        for (var c = 0; c < 2; c++) if (q.modules[row][col - c] === null) {
+          var bit = g[row][col - c]; if (QRUtil.getMask(best.mk, row, col - c)) bit = !bit;
+          cur = (cur << 1) | (bit ? 1 : 0); nb++; if (nb === 8) { bytes.push(cur); cur = 0; nb = 0; }
+        }
+        row += inc; if (row < 0 || n <= row) { row -= inc; inc = -inc; break; }
+      }
+    }
+    var blocks = QRRSBlock.getRSBlocks(ver, best.ecl), maxDc = 0, maxEc = 0, k = 0, s, z;
+    var bl = blocks.map(function (x) { maxDc = Math.max(maxDc, x.dataCount); maxEc = Math.max(maxEc, x.totalCount - x.dataCount); return { d: [], e: [], dc: x.dataCount, ec: x.totalCount - x.dataCount }; });
+    for (z = 0; z < maxDc; z++) for (s = 0; s < bl.length; s++) if (z < bl[s].dc) bl[s].d.push(bytes[k++]);
+    for (z = 0; z < maxEc; z++) for (s = 0; s < bl.length; s++) if (z < bl[s].ec) bl[s].e.push(bytes[k++]);
+    var data = [];
+    for (s = 0; s < bl.length; s++) { var fixed = rsCorrect(bl[s].d.concat(bl[s].e), bl[s].ec); if (!fixed) return null; data = data.concat(fixed.slice(0, bl[s].dc)); }
+    return parseData(data, ver);
+  }
+
+  var ALNUM = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ $%*+-./:";
+  function parseData(data, ver) {
+    var pos = 0, total = data.length * 8;
+    var read = function (nbits) { if (pos + nbits > total) throw new Error("eof"); var v = 0; for (var i = 0; i < nbits; i++) { v = (v << 1) | ((data[(pos >> 3)] >> (7 - (pos & 7))) & 1); pos++; } return v; };
+    var out = [], txt = "";
+    try {
+      while (pos + 4 <= total) {
+        var mode = read(4);
+        if (mode === 0) break;
+        if (mode === 7) { var e = read(8); if ((e & 0x80) === 0x80) read((e & 0x40) ? 16 : 8); continue; }
+        if (mode === 1) { var cnt = read(QRUtil.getLengthInBits(1, ver)); while (cnt >= 3) { var d3 = read(10); txt += ("00" + d3).slice(-3); cnt -= 3; } if (cnt === 2) txt += ("0" + read(7)).slice(-2); else if (cnt === 1) txt += String(read(4)); continue; }
+        if (mode === 2) { var ca = read(QRUtil.getLengthInBits(2, ver)); while (ca >= 2) { var p = read(11); txt += ALNUM[Math.floor(p / 45)] + ALNUM[p % 45]; ca -= 2; } if (ca === 1) txt += ALNUM[read(6)]; continue; }
+        if (mode === 4) { var cb = read(QRUtil.getLengthInBits(4, ver)), buf = []; for (var i = 0; i < cb; i++) buf.push(read(8)); txt += Buffer.from(buf).toString("utf8"); continue; }
+        return null; // kanji/อื่นๆ ไม่รองรับ
+      }
+    } catch (err) { if (!txt) return null; }
+    return txt;
+  }
+
+  function decode(gray, w, h) {
+    var kinds = ["otsu", "local", "local2"];
+    for (var ki = 0; ki < kinds.length; ki++) {
+      var bin = binarize(gray, w, h, kinds[ki]);
+      var cl = findFinders(bin, w, h); if (cl.length < 3) continue;
+      var tri = triples(cl);
+      for (var ti = 0; ti < tri.length; ti++) {
+        var t = tri[ti], tl = t.tl, tr = t.tr, bl = t.bl;
+        var msDir = function (p, q) { // ขนาดช่องตามแนวเส้นระหว่างจุด (แม่นกว่าตอนภาพเอียง)
+          var L = dist(p, q), dx = (q.x - p.x) / L, dy = (q.y - p.y) / L, a = crossCount(bin, w, h, p.x, p.y, dx, dy, t.ms * 14), b = crossCount(bin, w, h, q.x, q.y, dx, dy, t.ms * 14);
+          var v = [a, b].filter(function (z) { return z && ratioOk(z.c, false); }).map(function (z) { return z.total / 7; });
+          return v.length ? v.reduce(function (x, y) { return x + y; }, 0) / v.length : t.ms;
+        };
+        var est = (dist(tl, tr) / msDir(tl, tr) + dist(tl, bl) / msDir(tl, bl)) / 2 + 7, dim = Math.round(est);
+        var m4 = dim & 3; if (m4 === 0) dim++; else if (m4 === 2) dim--; else if (m4 === 3) dim -= 2;
+        var dims = [dim, dim + 4, dim - 4, dim + 8, dim - 8];
+        for (var di = 0; di < dims.length; di++) {
+          var n = dims[di]; if (n < 21 || n > 177) continue;
+          var span = n - 7, ux = [(tr.x - tl.x) / span, (tr.y - tl.y) / span], uy = [(bl.x - tl.x) / span, (bl.y - tl.y) / span];
+          var br = [tr.x + bl.x - tl.x, tr.y + bl.y - tl.y];
+          var tries = [];
+          if (n > 21) {
+            var f = 1 - 3 / span, e2 = [tl.x + f * (br[0] - tl.x), tl.y + f * (br[1] - tl.y)];
+            var al = findAlign(bin, w, h, e2, ux, uy);
+            if (al) tries.push(transformFor([[3.5, 3.5], [n - 3.5, 3.5], [n - 6.5, n - 6.5], [3.5, n - 3.5]], [[tl.x, tl.y], [tr.x, tr.y], [al.x, al.y], [bl.x, bl.y]]));
+          }
+          tries.push(transformFor([[3.5, 3.5], [n - 3.5, 3.5], [n - 3.5, n - 3.5], [3.5, n - 3.5]], [[tl.x, tl.y], [tr.x, tr.y], br, [bl.x, bl.y]]));
+          for (var k = 0; k < tries.length; k++) {
+            var res = null;
+            try { res = decodeGrid(readGrid(bin, w, h, tries[k], n)); } catch (e) { res = null; }
+            if (res) return res;
+          }
+        }
+      }
+    }
+    return null;
+  }
+
+  return { svg: svg, decode: decode, QRCode: QRCode, L: QRErrorCorrectLevel };
 })();
 /* =====================================================================
    POS ขายหน้าร้าน (v3.0) — เปิด/ปิดแยกแต่ละสาขา · ยอดขายเข้ารายรับรายวันอัตโนมัติ
@@ -1811,6 +2108,63 @@ route("DELETE", B + "/pos/menu/:id", async ctx => {
   if (r) await logActivity(ctx, "pos_menu_delete", "ลบเมนู POS " + r.name, ctx.branch.id);
   return { ok: true };
 });
+// ทำสำเนาเมนู 1 รายการ (อยู่ถัดจากเมนูเดิม)
+route("POST", B + "/pos/menu/:id/duplicate", async ctx => {
+  await needPos(ctx, true, "edit");
+  const m = (await pool.query("SELECT * FROM pos_menu WHERE id=$1 AND branch_id=$2", [ctx.params.id, ctx.branch.id])).rows[0]; if (!m) throw new HttpError(404, "ไม่พบเมนู");
+  const id = uid(), t = now(), name = (m.name + " (สำเนา)").slice(0, 150);
+  await pool.query(`INSERT INTO pos_menu (id,branch_id,name,names_json,category,price,types_json,addons_json,daily_limit,soldout,active,image,sort_order,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,FALSE,$10,$11,$12,$13,$13)`,
+    [id, ctx.branch.id, name, m.names_json, m.category, m.price, m.types_json, m.addons_json, m.daily_limit, m.active, m.image, m.sort_order, t]);
+  await logActivity(ctx, "pos_menu_add", "ทำสำเนาเมนู POS " + m.name, ctx.branch.id);
+  return { ok: true, id };
+});
+// ผู้ดูแล: คัดลอกเมนูระหว่างสาขา (ไม่ยุ่งกับยอดขาย/ออเดอร์)
+route("GET", "/api/admin/pos/menus", async ctx => {
+  needAdmin(ctx);
+  const counts = {}; (await pool.query("SELECT branch_id, COUNT(*)::int AS c FROM pos_menu GROUP BY branch_id")).rows.forEach(r => { counts[r.branch_id] = r.c; });
+  const bid = str(ctx.query.branch, 100); let menu = [];
+  if (bid) menu = (await pool.query("SELECT id, name, category, price, active, (image IS NOT NULL AND image<>'') AS has_image FROM pos_menu WHERE branch_id=$1 ORDER BY sort_order, created_at", [bid])).rows.map(r => ({ id: r.id, name: r.name, category: r.category || "", price: Number(r.price), active: r.active, hasImage: r.has_image }));
+  return { counts, menu };
+});
+route("POST", "/api/admin/pos/copy-menu", async ctx => {
+  needAdmin(ctx);
+  const b = ctx.body || {}, from = str(b.from, 100);
+  const src = (await pool.query("SELECT id, name FROM branches WHERE id=$1", [from])).rows[0]; if (!src) throw bad("ไม่พบสาขาต้นทาง");
+  const to = [...new Set((Array.isArray(b.to) ? b.to : []).map(x => str(x, 100)).filter(x => x && x !== from))].slice(0, 100);
+  if (!to.length) throw bad("กรุณาเลือกสาขาปลายทาง");
+  const tgt = (await pool.query("SELECT id, name FROM branches WHERE id IN (" + to.map((x, i) => "$" + (i + 1)).join(",") + ")", to)).rows; if (tgt.length !== to.length) throw bad("ไม่พบสาขาปลายทางบางสาขา");
+  let items = (await pool.query("SELECT * FROM pos_menu WHERE branch_id=$1 ORDER BY sort_order, created_at", [from])).rows;
+  if (Array.isArray(b.ids)) { const ids = new Set(b.ids.map(String)); items = items.filter(m => ids.has(m.id)); }
+  if (!items.length) throw bad("กรุณาเลือกเมนูที่จะคัดลอก");
+  const update = b.mode === "update", withImg = b.images !== false, key = n => String(n || "").trim().toLowerCase();
+  const result = [];
+  {
+    for (const t of tgt) {
+      const ex = {}; (await pool.query("SELECT id, name FROM pos_menu WHERE branch_id=$1", [t.id])).rows.forEach(r => { ex[key(r.name)] = r.id; });
+      let so = Number((await pool.query("SELECT COALESCE(MAX(sort_order),0) AS m FROM pos_menu WHERE branch_id=$1", [t.id])).rows[0].m) || 0;
+      let added = 0, updated = 0, skipped = 0; const ts = now();
+      for (const m of items) {
+        const cur = ex[key(m.name)];
+        if (cur) {
+          if (!update) { skipped++; continue; }
+          await pool.query("UPDATE pos_menu SET names_json=$1,category=$2,price=$3,types_json=$4,addons_json=$5,daily_limit=$6,updated_at=$7" + (withImg && m.image ? ",image=$9" : "") + " WHERE id=$8",
+            [m.names_json, m.category, m.price, m.types_json, m.addons_json, m.daily_limit, ts].concat([cur]).concat(withImg && m.image ? [m.image] : []));
+          updated++; continue;
+        }
+        await pool.query(`INSERT INTO pos_menu (id,branch_id,name,names_json,category,price,types_json,addons_json,daily_limit,soldout,active,image,sort_order,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,FALSE,$10,$11,$12,$13,$13)`,
+          [uid(), t.id, m.name, m.names_json, m.category, m.price, m.types_json, m.addons_json, m.daily_limit, m.active, withImg ? m.image : null, ++so, ts]);
+        ex[key(m.name)] = true; added++;
+      }
+      if (b.cats !== false) { // ลำดับหมวดเมนู
+        const sc = await posConfig(from), tc = await posConfig(t.id);
+        if ((sc.menuCats || []).length) { tc.menuCats = [...new Set((sc.menuCats || []).concat(tc.menuCats || []))].slice(0, 40); await pool.query("INSERT INTO pos_config (branch_id, data) VALUES ($1,$2) ON CONFLICT (branch_id) DO UPDATE SET data=EXCLUDED.data", [t.id, JSON.stringify(tc)]); }
+      }
+      result.push({ branchId: t.id, name: t.name, added, updated, skipped });
+    }
+  }
+  for (const r of result) await logActivity(ctx, "pos_menu_copy", "คัดลอกเมนู POS จาก " + src.name + " → " + r.name + " (เพิ่ม " + r.added + (r.updated ? ", อัปเดต " + r.updated : "") + (r.skipped ? ", ข้ามชื่อซ้ำ " + r.skipped : "") + ")", r.branchId);
+  return { ok: true, result };
+});
 route("POST", B + "/pos/menu-order", async ctx => {
   await needPos(ctx, true, "edit");
   const ids = (Array.isArray(ctx.body.ids) ? ctx.body.ids : []).map(String).slice(0, 500); let n = 0;
@@ -1834,6 +2188,31 @@ route("PUT", B + "/pos/config", async ctx => {
   if (b.autoIncome !== undefined) { const days = (await pool.query("SELECT DISTINCT order_date FROM pos_orders WHERE branch_id=$1 AND order_date>=$2", [ctx.branch.id, dayBefore(todayBkk()).slice(0, 8) + "01"])).rows; for (const d of days) await posSyncIncome(ctx, ctx.branch.id, d.order_date); }
   return { ok: true };
 });
+// อ่าน QR จากรูป (ส่งภาพขาวดำมาจากเครื่อง) — ใช้ได้บน iPhone/iPad ทุกเบราว์เซอร์
+route("POST", B + "/pos/qr-decode", async ctx => {
+  await needPos(ctx, true, "edit");
+  const b = ctx.body || {}, w = Math.floor(num(b.w, 0)), h = Math.floor(num(b.h, 0));
+  if (!(w >= 21 && h >= 21 && w <= 2400 && h <= 2400)) throw bad("ขนาดรูปไม่ถูกต้อง");
+  const gray = Buffer.from(String(b.gray || ""), "base64");
+  if (gray.length !== w * h) throw bad("ข้อมูลรูปไม่ถูกต้อง");
+  let text = null;
+  try { text = QRLib.decode(gray, w, h); } catch (e) { text = null; }
+  if (!text) throw bad("อ่าน QR จากรูปนี้ไม่ได้ — ลองครอปให้เห็น QR ชัดๆ เต็มกรอบ หรือแคปหน้าจอ QR จากแอปธนาคารโดยตรง");
+  return posQrInfo(text);
+});
+route("POST", B + "/pos/qr-info", async ctx => { await needPos(ctx, true, "edit"); const t = String((ctx.body || {}).text || "").slice(0, 2000); if (!t) throw bad("ไม่มีข้อมูล QR"); return posQrInfo(t); });
+function posQrInfo(text) {
+  text = String(text).trim();
+  const out = { text, kind: "other" };
+  let top; try { top = qrTlvTop(text); } catch (e) { return out; }
+  const get = t => (top.find(x => x.tag === t) || {}).value || "";
+  if (text.length > 8 && text.slice(-8, -4) === "6304" && qrCrc16(text.slice(0, -4)) !== text.slice(-4).toUpperCase()) out.crcBad = true;
+  out.name = get("59");
+  try { out.merchantCode = checkMerchantTemplate(text); out.kind = "merchant"; return out; } catch (e) {}
+  const pp = get("29");
+  if (pp) { try { const sub = qrTlvTop(pp); const aid = (sub.find(x => x.tag === "00") || {}).value || ""; if (aid.startsWith("A000000677010111")) { const id = sub.find(x => ["01", "02", "03"].includes(x.tag)); if (id) { out.kind = "promptpay"; out.promptpayId = id.tag === "01" ? "0" + id.value.replace(/^0066/, "") : id.value; } } } catch (e) {} }
+  return out;
+}
 // QR สำหรับยอดเงิน + ขึ้นจอลูกค้า
 route("POST", B + "/pos/qr", async ctx => {
   await needPos(ctx, false, "edit");
