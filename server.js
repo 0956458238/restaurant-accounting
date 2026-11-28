@@ -13,7 +13,7 @@ const crypto = require("crypto");
 const { Pool } = require("pg");
 
 const PORT = Number(process.env.PORT) || 3000;
-const BUILD_ID = "2.7.0";
+const BUILD_ID = "3.0.0";
 const INIT_ADMIN_USER = String(process.env.ADMIN_USER || "admin").trim();
 const INIT_ADMIN_PASS = String(process.env.ADMIN_PASS || "admin1234");
 const PUBLIC_DIR = path.join(__dirname, "public");
@@ -259,7 +259,39 @@ async function initDb() {
       status TEXT NOT NULL DEFAULT 'open', bought_qty NUMERIC, bought_unit TEXT, bought_price NUMERIC, move_id TEXT, pending BOOLEAN DEFAULT FALSE,
       created_by TEXT, created_at BIGINT, bought_by TEXT, bought_at BIGINT);
     CREATE INDEX IF NOT EXISTS idx_shop_branch ON shop_items(branch_id, status);
+    ALTER TABLE shop_items ADD COLUMN IF NOT EXISTS po_id TEXT;
+    CREATE TABLE IF NOT EXISTS purchase_orders (
+      id TEXT PRIMARY KEY, branch_id TEXT NOT NULL, po_no TEXT, po_date TEXT, status TEXT NOT NULL DEFAULT 'pending', note TEXT, lines_json TEXT,
+      created_by TEXT, created_at BIGINT, approved_by TEXT, approved_at BIGINT, reason TEXT);
+    CREATE INDEX IF NOT EXISTS idx_po_branch ON purchase_orders(branch_id, status);
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS photo TEXT;
+    ALTER TABLE stock_moves ADD COLUMN IF NOT EXISTS xfer_id TEXT, ADD COLUMN IF NOT EXISTS xfer_dir TEXT, ADD COLUMN IF NOT EXISTS xfer_branch TEXT;
+    CREATE TABLE IF NOT EXISTS businesses (
+      id TEXT PRIMARY KEY, name TEXT NOT NULL, address TEXT, tax_id TEXT, phone TEXT, logo TEXT, kind TEXT, sort_order BIGINT, created_at BIGINT);
+    ALTER TABLE branches ADD COLUMN IF NOT EXISTS business_id TEXT;
+    ALTER TABLE branches ADD COLUMN IF NOT EXISTS pos_enabled BOOLEAN NOT NULL DEFAULT FALSE;
+    ALTER TABLE records ADD COLUMN IF NOT EXISTS pos_key TEXT;
+    CREATE INDEX IF NOT EXISTS idx_records_pos ON records(branch_id, pos_key);
+    CREATE TABLE IF NOT EXISTS pos_config (branch_id TEXT PRIMARY KEY, data TEXT NOT NULL DEFAULT '{}');
+    CREATE TABLE IF NOT EXISTS pos_menu (
+      id TEXT PRIMARY KEY, branch_id TEXT NOT NULL, name TEXT NOT NULL, names_json TEXT, category TEXT, price NUMERIC NOT NULL DEFAULT 0, image TEXT,
+      types_json TEXT, addons_json TEXT, daily_limit INT, soldout BOOLEAN NOT NULL DEFAULT FALSE, active BOOLEAN NOT NULL DEFAULT TRUE, sort_order BIGINT, created_at BIGINT, updated_at BIGINT);
+    CREATE INDEX IF NOT EXISTS idx_pos_menu_branch ON pos_menu(branch_id);
+    CREATE TABLE IF NOT EXISTS pos_orders (
+      id TEXT PRIMARY KEY, branch_id TEXT NOT NULL, queue_no TEXT, order_date TEXT NOT NULL, items_json TEXT, subtotal NUMERIC, discount NUMERIC, total NUMERIC NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'paid', pay_method TEXT, pay_channel TEXT, cash_received NUMERIC, change_amount NUMERIC, slip TEXT, note TEXT,
+      created_by TEXT, created_at BIGINT, prepared_at BIGINT, prepared_by TEXT, cancelled_at BIGINT, cancelled_by TEXT, cancel_reason TEXT, refund_amount NUMERIC DEFAULT 0);
+    CREATE INDEX IF NOT EXISTS idx_pos_orders_day ON pos_orders(branch_id, order_date);
+    CREATE TABLE IF NOT EXISTS pos_counters (branch_id TEXT NOT NULL, day TEXT NOT NULL, n INT NOT NULL DEFAULT 0, PRIMARY KEY (branch_id, day));
   `);
+  // v2.9: ธุรกิจ — ข้อมูลเดิมทั้งหมดย้ายเข้า "ธุรกิจหลัก" (ใช้ชื่อ/โลโก้บริษัทเดิม) ไม่มีข้อมูลหาย
+  if (!Number((await pool.query("SELECT COUNT(*)::int AS c FROM businesses")).rows[0].c)) {
+    const st = await getSettings();
+    await pool.query("INSERT INTO businesses (id,name,address,tax_id,phone,logo,kind,sort_order,created_at) VALUES ($1,$2,$3,$4,$5,$6,'restaurant',$7,$7)",
+      ["biz_main", st.company_name || "ธุรกิจหลัก", st.company_address || "", st.company_tax_id || "", st.company_phone || "", st.company_logo || "", now()]);
+  }
+  const firstBiz = (await pool.query("SELECT id FROM businesses ORDER BY sort_order, created_at LIMIT 1")).rows[0].id;
+  await pool.query("UPDATE branches SET business_id=$1 WHERE business_id IS NULL OR business_id NOT IN (SELECT id FROM businesses)", [firstBiz]);
   const a = await pool.query("SELECT COUNT(*)::int AS c FROM admins");
   if (Number(a.rows[0].c) === 0) {
     await pool.query("INSERT INTO admins (id,username,name,pass_hash,must_change,active,created_at) VALUES ($1,$2,$3,$4,TRUE,TRUE,$5)",
@@ -306,7 +338,7 @@ async function createSession(kind, adminId, branchId, req, userId) {
 
 /* ---------- สิทธิ์การใช้งาน ---------- */
 // เมนูที่กำหนดสิทธิ์ได้: none = ไม่เห็น, view = ดูอย่างเดียว, edit = แก้ไขได้
-const MENUS = ["dashboard", "income", "expense", "invest", "ledger", "accounts", "statements", "stock", "employees", "payroll", "leave", "advance", "attendance", "cards", "settings", "log"];
+const MENUS = ["dashboard", "income", "expense", "invest", "ledger", "accounts", "statements", "stock", "employees", "payroll", "leave", "advance", "attendance", "cards", "settings", "log", "pos", "pos_admin"];
 const LV = { none: 0, view: 1, edit: 2 };
 function fullPerms() { const m = {}; MENUS.forEach(k => { m[k] = "edit"; }); return { menus: m, approve: { stock: true, leave: true, advance: true }, full: true }; }
 function cleanPerms(p) { const m = {}; MENUS.forEach(k => { m[k] = ["none", "view", "edit"].includes(p && p[k]) ? p[k] : "none"; }); return m; }
@@ -347,7 +379,7 @@ function needAdmin(ctx) {
   if (!ctx.session || !ctx.session.isAdmin) throw new HttpError(401, "กรุณาเข้าสู่ระบบผู้ดูแล");
   if (ctx.session.must_change && !ctx.allowMustChange) throw new HttpError(403, "กรุณาเปลี่ยนรหัสผ่านก่อนใช้งาน");
 }
-const MENU_TH = { dashboard: "ภาพรวม", income: "รายรับ", expense: "รายจ่าย", invest: "สินทรัพย์", ledger: "สมุดบัญชี", accounts: "เงินในบัญชี", statements: "งบการเงิน", stock: "สต็อก",
+const MENU_TH = { pos: "POS ขายหน้าร้าน / ออเดอร์", pos_admin: "POS ตั้งค่าเมนู & รายงาน", dashboard: "ภาพรวม", income: "รายรับ", expense: "รายจ่าย", invest: "สินทรัพย์", ledger: "สมุดบัญชี", accounts: "เงินในบัญชี", statements: "งบการเงิน", stock: "สต็อก",
   employees: "พนักงาน", payroll: "เงินเดือน", leave: "ขาด-ลา", advance: "เบิกเงินล่วงหน้า", attendance: "ลงเวลา/เช็คอิน", cards: "บัตรเครดิต", settings: "ตั้งค่าหมวด", log: "log การใช้งาน" };
 // ตรวจสิทธิ์ทุก API ของสาขา: menu = เมนูเดียวหรือหลายเมนู (มีสิทธิ์เมนูใดเมนูหนึ่งก็พอ), level = view / edit
 async function needBranch(ctx, menu, level) {
@@ -383,14 +415,1613 @@ function route(method, pattern, handler) {
 }
 const B = "/api/b/:bid"; // ทุกเส้นทางของสาขา
 
+/* ===== QR Code encoder — QRCode for JavaScript, Copyright (c) 2009 Kazuhiko Arase, MIT license (http://www.opensource.org/licenses/mit-license.php)
+   "QR Code" is a registered trademark of DENSO WAVE INCORPORATED. Bundled from qrcode-terminal/vendor/QRCode. ===== */
+const QRLib = (function () {
+var QRMode = {
+    MODE_NUMBER :       1 << 0,
+    MODE_ALPHA_NUM :    1 << 1,
+    MODE_8BIT_BYTE :    1 << 2,
+    MODE_KANJI :        1 << 3
+};
+
+var QRErrorCorrectLevel = {
+	L : 1,
+	M : 0,
+	Q : 3,
+	H : 2
+};
+
+
+var QRMaskPattern = {
+	PATTERN000 : 0,
+	PATTERN001 : 1,
+	PATTERN010 : 2,
+	PATTERN011 : 3,
+	PATTERN100 : 4,
+	PATTERN101 : 5,
+	PATTERN110 : 6,
+	PATTERN111 : 7
+};
+
+var QRMath = {
+
+	glog : function(n) {
+	
+		if (n < 1) {
+			throw new Error("glog(" + n + ")");
+		}
+		
+		return QRMath.LOG_TABLE[n];
+	},
+	
+	gexp : function(n) {
+	
+		while (n < 0) {
+			n += 255;
+		}
+	
+		while (n >= 256) {
+			n -= 255;
+		}
+	
+		return QRMath.EXP_TABLE[n];
+	},
+	
+	EXP_TABLE : new Array(256),
+	
+	LOG_TABLE : new Array(256)
+
+};
+	
+for (var i = 0; i < 8; i++) {
+	QRMath.EXP_TABLE[i] = 1 << i;
+}
+for (var i = 8; i < 256; i++) {
+	QRMath.EXP_TABLE[i] = QRMath.EXP_TABLE[i - 4]
+		^ QRMath.EXP_TABLE[i - 5]
+		^ QRMath.EXP_TABLE[i - 6]
+		^ QRMath.EXP_TABLE[i - 8];
+}
+for (var i = 0; i < 255; i++) {
+	QRMath.LOG_TABLE[QRMath.EXP_TABLE[i] ] = i;
+}
+
+
+
+
+function QRPolynomial(num, shift) {
+	if (num.length === undefined) {
+		throw new Error(num.length + "/" + shift);
+	}
+
+	var offset = 0;
+
+	while (offset < num.length && num[offset] === 0) {
+		offset++;
+	}
+
+	this.num = new Array(num.length - offset + shift);
+	for (var i = 0; i < num.length - offset; i++) {
+		this.num[i] = num[i + offset];
+	}
+}
+
+QRPolynomial.prototype = {
+
+	get : function(index) {
+		return this.num[index];
+	},
+	
+	getLength : function() {
+		return this.num.length;
+	},
+	
+	multiply : function(e) {
+	
+		var num = new Array(this.getLength() + e.getLength() - 1);
+	
+		for (var i = 0; i < this.getLength(); i++) {
+			for (var j = 0; j < e.getLength(); j++) {
+				num[i + j] ^= QRMath.gexp(QRMath.glog(this.get(i) ) + QRMath.glog(e.get(j) ) );
+			}
+		}
+	
+		return new QRPolynomial(num, 0);
+	},
+	
+	mod : function(e) {
+	
+		if (this.getLength() - e.getLength() < 0) {
+			return this;
+		}
+	
+		var ratio = QRMath.glog(this.get(0) ) - QRMath.glog(e.get(0) );
+	
+		var num = new Array(this.getLength() );
+		
+		for (var i = 0; i < this.getLength(); i++) {
+			num[i] = this.get(i);
+		}
+		
+		for (var x = 0; x < e.getLength(); x++) {
+			num[x] ^= QRMath.gexp(QRMath.glog(e.get(x) ) + ratio);
+		}
+	
+		// recursive call
+		return new QRPolynomial(num, 0).mod(e);
+	}
+};
+
+
+
+
+function QR8bitByte(data) {
+	this.mode = QRMode.MODE_8BIT_BYTE;
+	this.data = data;
+}
+
+QR8bitByte.prototype = {
+
+	getLength : function() {
+		return this.data.length;
+	},
+	
+	write : function(buffer) {
+		for (var i = 0; i < this.data.length; i++) {
+			// not JIS ...
+			buffer.put(this.data.charCodeAt(i), 8);
+		}
+	}
+};
+
+
+
+function QRBitBuffer() {
+	this.buffer = [];
+	this.length = 0;
+}
+
+QRBitBuffer.prototype = {
+
+	get : function(index) {
+		var bufIndex = Math.floor(index / 8);
+		return ( (this.buffer[bufIndex] >>> (7 - index % 8) ) & 1) == 1;
+	},
+	
+	put : function(num, length) {
+		for (var i = 0; i < length; i++) {
+			this.putBit( ( (num >>> (length - i - 1) ) & 1) == 1);
+		}
+	},
+	
+	getLengthInBits : function() {
+		return this.length;
+	},
+	
+	putBit : function(bit) {
+	
+		var bufIndex = Math.floor(this.length / 8);
+		if (this.buffer.length <= bufIndex) {
+			this.buffer.push(0);
+		}
+	
+		if (bit) {
+			this.buffer[bufIndex] |= (0x80 >>> (this.length % 8) );
+		}
+	
+		this.length++;
+	}
+};
+
+
+
+
+function QRRSBlock(totalCount, dataCount) {
+	this.totalCount = totalCount;
+	this.dataCount  = dataCount;
+}
+
+QRRSBlock.RS_BLOCK_TABLE = [
+
+	// L
+	// M
+	// Q
+	// H
+
+	// 1
+	[1, 26, 19],
+	[1, 26, 16],
+	[1, 26, 13],
+	[1, 26, 9],
+	
+	// 2
+	[1, 44, 34],
+	[1, 44, 28],
+	[1, 44, 22],
+	[1, 44, 16],
+
+	// 3
+	[1, 70, 55],
+	[1, 70, 44],
+	[2, 35, 17],
+	[2, 35, 13],
+
+	// 4		
+	[1, 100, 80],
+	[2, 50, 32],
+	[2, 50, 24],
+	[4, 25, 9],
+	
+	// 5
+	[1, 134, 108],
+	[2, 67, 43],
+	[2, 33, 15, 2, 34, 16],
+	[2, 33, 11, 2, 34, 12],
+	
+	// 6
+	[2, 86, 68],
+	[4, 43, 27],
+	[4, 43, 19],
+	[4, 43, 15],
+	
+	// 7		
+	[2, 98, 78],
+	[4, 49, 31],
+	[2, 32, 14, 4, 33, 15],
+	[4, 39, 13, 1, 40, 14],
+	
+	// 8
+	[2, 121, 97],
+	[2, 60, 38, 2, 61, 39],
+	[4, 40, 18, 2, 41, 19],
+	[4, 40, 14, 2, 41, 15],
+	
+	// 9
+	[2, 146, 116],
+	[3, 58, 36, 2, 59, 37],
+	[4, 36, 16, 4, 37, 17],
+	[4, 36, 12, 4, 37, 13],
+	
+	// 10		
+	[2, 86, 68, 2, 87, 69],
+	[4, 69, 43, 1, 70, 44],
+	[6, 43, 19, 2, 44, 20],
+	[6, 43, 15, 2, 44, 16],
+
+	// 11
+	[4, 101, 81],
+	[1, 80, 50, 4, 81, 51],
+	[4, 50, 22, 4, 51, 23],
+	[3, 36, 12, 8, 37, 13],
+
+	// 12
+	[2, 116, 92, 2, 117, 93],
+	[6, 58, 36, 2, 59, 37],
+	[4, 46, 20, 6, 47, 21],
+	[7, 42, 14, 4, 43, 15],
+
+	// 13
+	[4, 133, 107],
+	[8, 59, 37, 1, 60, 38],
+	[8, 44, 20, 4, 45, 21],
+	[12, 33, 11, 4, 34, 12],
+
+	// 14
+	[3, 145, 115, 1, 146, 116],
+	[4, 64, 40, 5, 65, 41],
+	[11, 36, 16, 5, 37, 17],
+	[11, 36, 12, 5, 37, 13],
+
+	// 15
+	[5, 109, 87, 1, 110, 88],
+	[5, 65, 41, 5, 66, 42],
+	[5, 54, 24, 7, 55, 25],
+	[11, 36, 12],
+
+	// 16
+	[5, 122, 98, 1, 123, 99],
+	[7, 73, 45, 3, 74, 46],
+	[15, 43, 19, 2, 44, 20],
+	[3, 45, 15, 13, 46, 16],
+
+	// 17
+	[1, 135, 107, 5, 136, 108],
+	[10, 74, 46, 1, 75, 47],
+	[1, 50, 22, 15, 51, 23],
+	[2, 42, 14, 17, 43, 15],
+
+	// 18
+	[5, 150, 120, 1, 151, 121],
+	[9, 69, 43, 4, 70, 44],
+	[17, 50, 22, 1, 51, 23],
+	[2, 42, 14, 19, 43, 15],
+
+	// 19
+	[3, 141, 113, 4, 142, 114],
+	[3, 70, 44, 11, 71, 45],
+	[17, 47, 21, 4, 48, 22],
+	[9, 39, 13, 16, 40, 14],
+
+	// 20
+	[3, 135, 107, 5, 136, 108],
+	[3, 67, 41, 13, 68, 42],
+	[15, 54, 24, 5, 55, 25],
+	[15, 43, 15, 10, 44, 16],
+
+	// 21
+	[4, 144, 116, 4, 145, 117],
+	[17, 68, 42],
+	[17, 50, 22, 6, 51, 23],
+	[19, 46, 16, 6, 47, 17],
+
+	// 22
+	[2, 139, 111, 7, 140, 112],
+	[17, 74, 46],
+	[7, 54, 24, 16, 55, 25],
+	[34, 37, 13],
+
+	// 23
+	[4, 151, 121, 5, 152, 122],
+	[4, 75, 47, 14, 76, 48],
+	[11, 54, 24, 14, 55, 25],
+	[16, 45, 15, 14, 46, 16],
+
+	// 24
+	[6, 147, 117, 4, 148, 118],
+	[6, 73, 45, 14, 74, 46],
+	[11, 54, 24, 16, 55, 25],
+	[30, 46, 16, 2, 47, 17],
+
+	// 25
+	[8, 132, 106, 4, 133, 107],
+	[8, 75, 47, 13, 76, 48],
+	[7, 54, 24, 22, 55, 25],
+	[22, 45, 15, 13, 46, 16],
+
+	// 26
+	[10, 142, 114, 2, 143, 115],
+	[19, 74, 46, 4, 75, 47],
+	[28, 50, 22, 6, 51, 23],
+	[33, 46, 16, 4, 47, 17],
+
+	// 27
+	[8, 152, 122, 4, 153, 123],
+	[22, 73, 45, 3, 74, 46],
+	[8, 53, 23, 26, 54, 24],
+	[12, 45, 15, 28, 46, 16],
+
+	// 28
+	[3, 147, 117, 10, 148, 118],
+	[3, 73, 45, 23, 74, 46],
+	[4, 54, 24, 31, 55, 25],
+	[11, 45, 15, 31, 46, 16],
+
+	// 29
+	[7, 146, 116, 7, 147, 117],
+	[21, 73, 45, 7, 74, 46],
+	[1, 53, 23, 37, 54, 24],
+	[19, 45, 15, 26, 46, 16],
+
+	// 30
+	[5, 145, 115, 10, 146, 116],
+	[19, 75, 47, 10, 76, 48],
+	[15, 54, 24, 25, 55, 25],
+	[23, 45, 15, 25, 46, 16],
+
+	// 31
+	[13, 145, 115, 3, 146, 116],
+	[2, 74, 46, 29, 75, 47],
+	[42, 54, 24, 1, 55, 25],
+	[23, 45, 15, 28, 46, 16],
+
+	// 32
+	[17, 145, 115],
+	[10, 74, 46, 23, 75, 47],
+	[10, 54, 24, 35, 55, 25],
+	[19, 45, 15, 35, 46, 16],
+
+	// 33
+	[17, 145, 115, 1, 146, 116],
+	[14, 74, 46, 21, 75, 47],
+	[29, 54, 24, 19, 55, 25],
+	[11, 45, 15, 46, 46, 16],
+
+	// 34
+	[13, 145, 115, 6, 146, 116],
+	[14, 74, 46, 23, 75, 47],
+	[44, 54, 24, 7, 55, 25],
+	[59, 46, 16, 1, 47, 17],
+
+	// 35
+	[12, 151, 121, 7, 152, 122],
+	[12, 75, 47, 26, 76, 48],
+	[39, 54, 24, 14, 55, 25],
+	[22, 45, 15, 41, 46, 16],
+
+	// 36
+	[6, 151, 121, 14, 152, 122],
+	[6, 75, 47, 34, 76, 48],
+	[46, 54, 24, 10, 55, 25],
+	[2, 45, 15, 64, 46, 16],
+
+	// 37
+	[17, 152, 122, 4, 153, 123],
+	[29, 74, 46, 14, 75, 47],
+	[49, 54, 24, 10, 55, 25],
+	[24, 45, 15, 46, 46, 16],
+
+	// 38
+	[4, 152, 122, 18, 153, 123],
+	[13, 74, 46, 32, 75, 47],
+	[48, 54, 24, 14, 55, 25],
+	[42, 45, 15, 32, 46, 16],
+
+	// 39
+	[20, 147, 117, 4, 148, 118],
+	[40, 75, 47, 7, 76, 48],
+	[43, 54, 24, 22, 55, 25],
+	[10, 45, 15, 67, 46, 16],
+
+	// 40
+	[19, 148, 118, 6, 149, 119],
+	[18, 75, 47, 31, 76, 48],
+	[34, 54, 24, 34, 55, 25],
+	[20, 45, 15, 61, 46, 16]
+];
+
+QRRSBlock.getRSBlocks = function(typeNumber, errorCorrectLevel) {
+	
+	var rsBlock = QRRSBlock.getRsBlockTable(typeNumber, errorCorrectLevel);
+	
+	if (rsBlock === undefined) {
+		throw new Error("bad rs block @ typeNumber:" + typeNumber + "/errorCorrectLevel:" + errorCorrectLevel);
+	}
+
+	var length = rsBlock.length / 3;
+	
+	var list = [];
+	
+	for (var i = 0; i < length; i++) {
+
+		var count = rsBlock[i * 3 + 0];
+		var totalCount = rsBlock[i * 3 + 1];
+		var dataCount  = rsBlock[i * 3 + 2];
+
+		for (var j = 0; j < count; j++) {
+			list.push(new QRRSBlock(totalCount, dataCount) );	
+		}
+	}
+	
+	return list;
+};
+
+QRRSBlock.getRsBlockTable = function(typeNumber, errorCorrectLevel) {
+
+	switch(errorCorrectLevel) {
+	case QRErrorCorrectLevel.L :
+		return QRRSBlock.RS_BLOCK_TABLE[(typeNumber - 1) * 4 + 0];
+	case QRErrorCorrectLevel.M :
+		return QRRSBlock.RS_BLOCK_TABLE[(typeNumber - 1) * 4 + 1];
+	case QRErrorCorrectLevel.Q :
+		return QRRSBlock.RS_BLOCK_TABLE[(typeNumber - 1) * 4 + 2];
+	case QRErrorCorrectLevel.H :
+		return QRRSBlock.RS_BLOCK_TABLE[(typeNumber - 1) * 4 + 3];
+	default :
+		return undefined;
+	}
+};
+
+
+
+
+var QRUtil = {
+
+    PATTERN_POSITION_TABLE : [
+        [],
+        [6, 18],
+        [6, 22],
+        [6, 26],
+        [6, 30],
+        [6, 34],
+        [6, 22, 38],
+        [6, 24, 42],
+        [6, 26, 46],
+        [6, 28, 50],
+        [6, 30, 54],        
+        [6, 32, 58],
+        [6, 34, 62],
+        [6, 26, 46, 66],
+        [6, 26, 48, 70],
+        [6, 26, 50, 74],
+        [6, 30, 54, 78],
+        [6, 30, 56, 82],
+        [6, 30, 58, 86],
+        [6, 34, 62, 90],
+        [6, 28, 50, 72, 94],
+        [6, 26, 50, 74, 98],
+        [6, 30, 54, 78, 102],
+        [6, 28, 54, 80, 106],
+        [6, 32, 58, 84, 110],
+        [6, 30, 58, 86, 114],
+        [6, 34, 62, 90, 118],
+        [6, 26, 50, 74, 98, 122],
+        [6, 30, 54, 78, 102, 126],
+        [6, 26, 52, 78, 104, 130],
+        [6, 30, 56, 82, 108, 134],
+        [6, 34, 60, 86, 112, 138],
+        [6, 30, 58, 86, 114, 142],
+        [6, 34, 62, 90, 118, 146],
+        [6, 30, 54, 78, 102, 126, 150],
+        [6, 24, 50, 76, 102, 128, 154],
+        [6, 28, 54, 80, 106, 132, 158],
+        [6, 32, 58, 84, 110, 136, 162],
+        [6, 26, 54, 82, 110, 138, 166],
+        [6, 30, 58, 86, 114, 142, 170]
+    ],
+
+    G15 : (1 << 10) | (1 << 8) | (1 << 5) | (1 << 4) | (1 << 2) | (1 << 1) | (1 << 0),
+    G18 : (1 << 12) | (1 << 11) | (1 << 10) | (1 << 9) | (1 << 8) | (1 << 5) | (1 << 2) | (1 << 0),
+    G15_MASK : (1 << 14) | (1 << 12) | (1 << 10)    | (1 << 4) | (1 << 1),
+
+    getBCHTypeInfo : function(data) {
+        var d = data << 10;
+        while (QRUtil.getBCHDigit(d) - QRUtil.getBCHDigit(QRUtil.G15) >= 0) {
+            d ^= (QRUtil.G15 << (QRUtil.getBCHDigit(d) - QRUtil.getBCHDigit(QRUtil.G15) ) );    
+        }
+        return ( (data << 10) | d) ^ QRUtil.G15_MASK;
+    },
+
+    getBCHTypeNumber : function(data) {
+        var d = data << 12;
+        while (QRUtil.getBCHDigit(d) - QRUtil.getBCHDigit(QRUtil.G18) >= 0) {
+            d ^= (QRUtil.G18 << (QRUtil.getBCHDigit(d) - QRUtil.getBCHDigit(QRUtil.G18) ) );    
+        }
+        return (data << 12) | d;
+    },
+
+    getBCHDigit : function(data) {
+
+        var digit = 0;
+
+        while (data !== 0) {
+            digit++;
+            data >>>= 1;
+        }
+
+        return digit;
+    },
+
+    getPatternPosition : function(typeNumber) {
+        return QRUtil.PATTERN_POSITION_TABLE[typeNumber - 1];
+    },
+
+    getMask : function(maskPattern, i, j) {
+        
+        switch (maskPattern) {
+            
+        case QRMaskPattern.PATTERN000 : return (i + j) % 2 === 0;
+        case QRMaskPattern.PATTERN001 : return i % 2 === 0;
+        case QRMaskPattern.PATTERN010 : return j % 3 === 0;
+        case QRMaskPattern.PATTERN011 : return (i + j) % 3 === 0;
+        case QRMaskPattern.PATTERN100 : return (Math.floor(i / 2) + Math.floor(j / 3) ) % 2 === 0;
+        case QRMaskPattern.PATTERN101 : return (i * j) % 2 + (i * j) % 3 === 0;
+        case QRMaskPattern.PATTERN110 : return ( (i * j) % 2 + (i * j) % 3) % 2 === 0;
+        case QRMaskPattern.PATTERN111 : return ( (i * j) % 3 + (i + j) % 2) % 2 === 0;
+
+        default :
+            throw new Error("bad maskPattern:" + maskPattern);
+        }
+    },
+
+    getErrorCorrectPolynomial : function(errorCorrectLength) {
+
+        var a = new QRPolynomial([1], 0);
+
+        for (var i = 0; i < errorCorrectLength; i++) {
+            a = a.multiply(new QRPolynomial([1, QRMath.gexp(i)], 0) );
+        }
+
+        return a;
+    },
+
+    getLengthInBits : function(mode, type) {
+
+        if (1 <= type && type < 10) {
+
+            // 1 - 9
+
+            switch(mode) {
+            case QRMode.MODE_NUMBER     : return 10;
+            case QRMode.MODE_ALPHA_NUM  : return 9;
+            case QRMode.MODE_8BIT_BYTE  : return 8;
+            case QRMode.MODE_KANJI      : return 8;
+            default :
+                throw new Error("mode:" + mode);
+            }
+
+        } else if (type < 27) {
+
+            // 10 - 26
+
+            switch(mode) {
+            case QRMode.MODE_NUMBER     : return 12;
+            case QRMode.MODE_ALPHA_NUM  : return 11;
+            case QRMode.MODE_8BIT_BYTE  : return 16;
+            case QRMode.MODE_KANJI      : return 10;
+            default :
+                throw new Error("mode:" + mode);
+            }
+
+        } else if (type < 41) {
+
+            // 27 - 40
+
+            switch(mode) {
+            case QRMode.MODE_NUMBER     : return 14;
+            case QRMode.MODE_ALPHA_NUM  : return 13;
+            case QRMode.MODE_8BIT_BYTE  : return 16;
+            case QRMode.MODE_KANJI      : return 12;
+            default :
+                throw new Error("mode:" + mode);
+            }
+
+        } else {
+            throw new Error("type:" + type);
+        }
+    },
+
+    getLostPoint : function(qrCode) {
+        
+        var moduleCount = qrCode.getModuleCount();
+        var lostPoint = 0;
+        var row = 0; 
+        var col = 0;
+
+        
+        // LEVEL1
+        
+        for (row = 0; row < moduleCount; row++) {
+
+            for (col = 0; col < moduleCount; col++) {
+
+                var sameCount = 0;
+                var dark = qrCode.isDark(row, col);
+
+                for (var r = -1; r <= 1; r++) {
+
+                    if (row + r < 0 || moduleCount <= row + r) {
+                        continue;
+                    }
+
+                    for (var c = -1; c <= 1; c++) {
+
+                        if (col + c < 0 || moduleCount <= col + c) {
+                            continue;
+                        }
+
+                        if (r === 0 && c === 0) {
+                            continue;
+                        }
+
+                        if (dark === qrCode.isDark(row + r, col + c) ) {
+                            sameCount++;
+                        }
+                    }
+                }
+
+                if (sameCount > 5) {
+                    lostPoint += (3 + sameCount - 5);
+                }
+            }
+        }
+
+        // LEVEL2
+
+        for (row = 0; row < moduleCount - 1; row++) {
+            for (col = 0; col < moduleCount - 1; col++) {
+                var count = 0;
+                if (qrCode.isDark(row,     col    ) ) count++;
+                if (qrCode.isDark(row + 1, col    ) ) count++;
+                if (qrCode.isDark(row,     col + 1) ) count++;
+                if (qrCode.isDark(row + 1, col + 1) ) count++;
+                if (count === 0 || count === 4) {
+                    lostPoint += 3;
+                }
+            }
+        }
+
+        // LEVEL3
+
+        for (row = 0; row < moduleCount; row++) {
+            for (col = 0; col < moduleCount - 6; col++) {
+                if (qrCode.isDark(row, col) && 
+                        !qrCode.isDark(row, col + 1) && 
+                         qrCode.isDark(row, col + 2) && 
+                         qrCode.isDark(row, col + 3) && 
+                         qrCode.isDark(row, col + 4) && 
+                        !qrCode.isDark(row, col + 5) && 
+                         qrCode.isDark(row, col + 6) ) {
+                    lostPoint += 40;
+                }
+            }
+        }
+
+        for (col = 0; col < moduleCount; col++) {
+            for (row = 0; row < moduleCount - 6; row++) {
+                if (qrCode.isDark(row, col) &&
+                        !qrCode.isDark(row + 1, col) &&
+                         qrCode.isDark(row + 2, col) &&
+                         qrCode.isDark(row + 3, col) &&
+                         qrCode.isDark(row + 4, col) &&
+                        !qrCode.isDark(row + 5, col) &&
+                         qrCode.isDark(row + 6, col) ) {
+                    lostPoint += 40;
+                }
+            }
+        }
+
+        // LEVEL4
+        
+        var darkCount = 0;
+
+        for (col = 0; col < moduleCount; col++) {
+            for (row = 0; row < moduleCount; row++) {
+                if (qrCode.isDark(row, col) ) {
+                    darkCount++;
+                }
+            }
+        }
+        
+        var ratio = Math.abs(100 * darkCount / moduleCount / moduleCount - 50) / 5;
+        lostPoint += ratio * 10;
+
+        return lostPoint;       
+    }
+
+};
+
+
+
+//---------------------------------------------------------------------
+// QRCode for JavaScript
+//
+// Copyright (c) 2009 Kazuhiko Arase
+//
+// URL: http://www.d-project.com/
+//
+// Licensed under the MIT license:
+//   http://www.opensource.org/licenses/mit-license.php
+//
+// The word "QR Code" is registered trademark of 
+// DENSO WAVE INCORPORATED
+//   http://www.denso-wave.com/qrcode/faqpatent-e.html
+//
+//---------------------------------------------------------------------
+// Modified to work in node for this project (and some refactoring)
+//---------------------------------------------------------------------
+
+
+function QRCode(typeNumber, errorCorrectLevel) {
+	this.typeNumber = typeNumber;
+	this.errorCorrectLevel = errorCorrectLevel;
+	this.modules = null;
+	this.moduleCount = 0;
+	this.dataCache = null;
+	this.dataList = [];
+}
+
+QRCode.prototype = {
+	
+	addData : function(data) {
+		var newData = new QR8bitByte(data);
+		this.dataList.push(newData);
+		this.dataCache = null;
+	},
+	
+	isDark : function(row, col) {
+		if (row < 0 || this.moduleCount <= row || col < 0 || this.moduleCount <= col) {
+			throw new Error(row + "," + col);
+		}
+		return this.modules[row][col];
+	},
+
+	getModuleCount : function() {
+		return this.moduleCount;
+	},
+	
+	make : function() {
+		// Calculate automatically typeNumber if provided is < 1
+		if (this.typeNumber < 1 ){
+			var typeNumber = 1;
+			for (typeNumber = 1; typeNumber < 40; typeNumber++) {
+				var rsBlocks = QRRSBlock.getRSBlocks(typeNumber, this.errorCorrectLevel);
+
+				var buffer = new QRBitBuffer();
+				var totalDataCount = 0;
+				for (var i = 0; i < rsBlocks.length; i++) {
+					totalDataCount += rsBlocks[i].dataCount;
+				}
+
+				for (var x = 0; x < this.dataList.length; x++) {
+					var data = this.dataList[x];
+					buffer.put(data.mode, 4);
+					buffer.put(data.getLength(), QRUtil.getLengthInBits(data.mode, typeNumber) );
+					data.write(buffer);
+				}
+				if (buffer.getLengthInBits() <= totalDataCount * 8)
+					break;
+			}
+			this.typeNumber = typeNumber;
+		}
+		this.makeImpl(false, this.getBestMaskPattern() );
+	},
+	
+	makeImpl : function(test, maskPattern) {
+		
+		this.moduleCount = this.typeNumber * 4 + 17;
+		this.modules = new Array(this.moduleCount);
+		
+		for (var row = 0; row < this.moduleCount; row++) {
+			
+			this.modules[row] = new Array(this.moduleCount);
+			
+			for (var col = 0; col < this.moduleCount; col++) {
+				this.modules[row][col] = null;//(col + row) % 3;
+			}
+		}
+	
+		this.setupPositionProbePattern(0, 0);
+		this.setupPositionProbePattern(this.moduleCount - 7, 0);
+		this.setupPositionProbePattern(0, this.moduleCount - 7);
+		this.setupPositionAdjustPattern();
+		this.setupTimingPattern();
+		this.setupTypeInfo(test, maskPattern);
+		
+		if (this.typeNumber >= 7) {
+			this.setupTypeNumber(test);
+		}
+	
+		if (this.dataCache === null) {
+			this.dataCache = QRCode.createData(this.typeNumber, this.errorCorrectLevel, this.dataList);
+		}
+	
+		this.mapData(this.dataCache, maskPattern);
+	},
+
+	setupPositionProbePattern : function(row, col)  {
+		
+		for (var r = -1; r <= 7; r++) {
+			
+			if (row + r <= -1 || this.moduleCount <= row + r) continue;
+			
+			for (var c = -1; c <= 7; c++) {
+				
+				if (col + c <= -1 || this.moduleCount <= col + c) continue;
+				
+				if ( (0 <= r && r <= 6 && (c === 0 || c === 6) ) || 
+                     (0 <= c && c <= 6 && (r === 0 || r === 6) ) || 
+                     (2 <= r && r <= 4 && 2 <= c && c <= 4) ) {
+					this.modules[row + r][col + c] = true;
+				} else {
+					this.modules[row + r][col + c] = false;
+				}
+			}		
+		}		
+	},
+	
+	getBestMaskPattern : function() {
+	
+		var minLostPoint = 0;
+		var pattern = 0;
+	
+		for (var i = 0; i < 8; i++) {
+			
+			this.makeImpl(true, i);
+	
+			var lostPoint = QRUtil.getLostPoint(this);
+	
+			if (i === 0 || minLostPoint >  lostPoint) {
+				minLostPoint = lostPoint;
+				pattern = i;
+			}
+		}
+	
+		return pattern;
+	},
+	
+	createMovieClip : function(target_mc, instance_name, depth) {
+	
+		var qr_mc = target_mc.createEmptyMovieClip(instance_name, depth);
+		var cs = 1;
+	
+		this.make();
+
+		for (var row = 0; row < this.modules.length; row++) {
+			
+			var y = row * cs;
+			
+			for (var col = 0; col < this.modules[row].length; col++) {
+	
+				var x = col * cs;
+				var dark = this.modules[row][col];
+			
+				if (dark) {
+					qr_mc.beginFill(0, 100);
+					qr_mc.moveTo(x, y);
+					qr_mc.lineTo(x + cs, y);
+					qr_mc.lineTo(x + cs, y + cs);
+					qr_mc.lineTo(x, y + cs);
+					qr_mc.endFill();
+				}
+			}
+		}
+		
+		return qr_mc;
+	},
+
+	setupTimingPattern : function() {
+		
+		for (var r = 8; r < this.moduleCount - 8; r++) {
+			if (this.modules[r][6] !== null) {
+				continue;
+			}
+			this.modules[r][6] = (r % 2 === 0);
+		}
+	
+		for (var c = 8; c < this.moduleCount - 8; c++) {
+			if (this.modules[6][c] !== null) {
+				continue;
+			}
+			this.modules[6][c] = (c % 2 === 0);
+		}
+	},
+	
+	setupPositionAdjustPattern : function() {
+	
+		var pos = QRUtil.getPatternPosition(this.typeNumber);
+		
+		for (var i = 0; i < pos.length; i++) {
+		
+			for (var j = 0; j < pos.length; j++) {
+			
+				var row = pos[i];
+				var col = pos[j];
+				
+				if (this.modules[row][col] !== null) {
+					continue;
+				}
+				
+				for (var r = -2; r <= 2; r++) {
+				
+					for (var c = -2; c <= 2; c++) {
+					
+						if (Math.abs(r) === 2 || 
+                            Math.abs(c) === 2 ||
+                            (r === 0 && c === 0) ) {
+							this.modules[row + r][col + c] = true;
+						} else {
+							this.modules[row + r][col + c] = false;
+						}
+					}
+				}
+			}
+		}
+	},
+	
+	setupTypeNumber : function(test) {
+	
+		var bits = QRUtil.getBCHTypeNumber(this.typeNumber);
+        var mod;
+	
+		for (var i = 0; i < 18; i++) {
+			mod = (!test && ( (bits >> i) & 1) === 1);
+			this.modules[Math.floor(i / 3)][i % 3 + this.moduleCount - 8 - 3] = mod;
+		}
+	
+		for (var x = 0; x < 18; x++) {
+			mod = (!test && ( (bits >> x) & 1) === 1);
+			this.modules[x % 3 + this.moduleCount - 8 - 3][Math.floor(x / 3)] = mod;
+		}
+	},
+	
+	setupTypeInfo : function(test, maskPattern) {
+	
+		var data = (this.errorCorrectLevel << 3) | maskPattern;
+		var bits = QRUtil.getBCHTypeInfo(data);
+        var mod;
+	
+		// vertical		
+		for (var v = 0; v < 15; v++) {
+	
+			mod = (!test && ( (bits >> v) & 1) === 1);
+	
+			if (v < 6) {
+				this.modules[v][8] = mod;
+			} else if (v < 8) {
+				this.modules[v + 1][8] = mod;
+			} else {
+				this.modules[this.moduleCount - 15 + v][8] = mod;
+			}
+		}
+	
+		// horizontal
+		for (var h = 0; h < 15; h++) {
+	
+			mod = (!test && ( (bits >> h) & 1) === 1);
+			
+			if (h < 8) {
+				this.modules[8][this.moduleCount - h - 1] = mod;
+			} else if (h < 9) {
+				this.modules[8][15 - h - 1 + 1] = mod;
+			} else {
+				this.modules[8][15 - h - 1] = mod;
+			}
+		}
+	
+		// fixed module
+		this.modules[this.moduleCount - 8][8] = (!test);
+	
+	},
+	
+	mapData : function(data, maskPattern) {
+		
+		var inc = -1;
+		var row = this.moduleCount - 1;
+		var bitIndex = 7;
+		var byteIndex = 0;
+		
+		for (var col = this.moduleCount - 1; col > 0; col -= 2) {
+	
+			if (col === 6) col--;
+	
+			while (true) {
+	
+				for (var c = 0; c < 2; c++) {
+					
+					if (this.modules[row][col - c] === null) {
+						
+						var dark = false;
+	
+						if (byteIndex < data.length) {
+							dark = ( ( (data[byteIndex] >>> bitIndex) & 1) === 1);
+						}
+	
+						var mask = QRUtil.getMask(maskPattern, row, col - c);
+	
+						if (mask) {
+							dark = !dark;
+						}
+						
+						this.modules[row][col - c] = dark;
+						bitIndex--;
+	
+						if (bitIndex === -1) {
+							byteIndex++;
+							bitIndex = 7;
+						}
+					}
+				}
+								
+				row += inc;
+	
+				if (row < 0 || this.moduleCount <= row) {
+					row -= inc;
+					inc = -inc;
+					break;
+				}
+			}
+		}
+		
+	}
+
+};
+
+QRCode.PAD0 = 0xEC;
+QRCode.PAD1 = 0x11;
+
+QRCode.createData = function(typeNumber, errorCorrectLevel, dataList) {
+	
+	var rsBlocks = QRRSBlock.getRSBlocks(typeNumber, errorCorrectLevel);
+	
+	var buffer = new QRBitBuffer();
+	
+	for (var i = 0; i < dataList.length; i++) {
+		var data = dataList[i];
+		buffer.put(data.mode, 4);
+		buffer.put(data.getLength(), QRUtil.getLengthInBits(data.mode, typeNumber) );
+		data.write(buffer);
+	}
+
+	// calc num max data.
+	var totalDataCount = 0;
+	for (var x = 0; x < rsBlocks.length; x++) {
+		totalDataCount += rsBlocks[x].dataCount;
+	}
+
+	if (buffer.getLengthInBits() > totalDataCount * 8) {
+		throw new Error("code length overflow. (" + 
+            buffer.getLengthInBits() + 
+            ">" +  
+            totalDataCount * 8 + 
+            ")");
+	}
+
+	// end code
+	if (buffer.getLengthInBits() + 4 <= totalDataCount * 8) {
+		buffer.put(0, 4);
+	}
+
+	// padding
+	while (buffer.getLengthInBits() % 8 !== 0) {
+		buffer.putBit(false);
+	}
+
+	// padding
+	while (true) {
+		
+		if (buffer.getLengthInBits() >= totalDataCount * 8) {
+			break;
+		}
+		buffer.put(QRCode.PAD0, 8);
+		
+		if (buffer.getLengthInBits() >= totalDataCount * 8) {
+			break;
+		}
+		buffer.put(QRCode.PAD1, 8);
+	}
+
+	return QRCode.createBytes(buffer, rsBlocks);
+};
+
+QRCode.createBytes = function(buffer, rsBlocks) {
+
+	var offset = 0;
+	
+	var maxDcCount = 0;
+	var maxEcCount = 0;
+	
+	var dcdata = new Array(rsBlocks.length);
+	var ecdata = new Array(rsBlocks.length);
+	
+	for (var r = 0; r < rsBlocks.length; r++) {
+
+		var dcCount = rsBlocks[r].dataCount;
+		var ecCount = rsBlocks[r].totalCount - dcCount;
+
+		maxDcCount = Math.max(maxDcCount, dcCount);
+		maxEcCount = Math.max(maxEcCount, ecCount);
+		
+		dcdata[r] = new Array(dcCount);
+		
+		for (var i = 0; i < dcdata[r].length; i++) {
+			dcdata[r][i] = 0xff & buffer.buffer[i + offset];
+		}
+		offset += dcCount;
+		
+		var rsPoly = QRUtil.getErrorCorrectPolynomial(ecCount);
+		var rawPoly = new QRPolynomial(dcdata[r], rsPoly.getLength() - 1);
+
+		var modPoly = rawPoly.mod(rsPoly);
+		ecdata[r] = new Array(rsPoly.getLength() - 1);
+		for (var x = 0; x < ecdata[r].length; x++) {
+            var modIndex = x + modPoly.getLength() - ecdata[r].length;
+			ecdata[r][x] = (modIndex >= 0)? modPoly.get(modIndex) : 0;
+		}
+
+	}
+	
+	var totalCodeCount = 0;
+	for (var y = 0; y < rsBlocks.length; y++) {
+		totalCodeCount += rsBlocks[y].totalCount;
+	}
+
+	var data = new Array(totalCodeCount);
+	var index = 0;
+
+	for (var z = 0; z < maxDcCount; z++) {
+		for (var s = 0; s < rsBlocks.length; s++) {
+			if (z < dcdata[s].length) {
+				data[index++] = dcdata[s][z];
+			}
+		}
+	}
+
+	for (var xx = 0; xx < maxEcCount; xx++) {
+		for (var t = 0; t < rsBlocks.length; t++) {
+			if (xx < ecdata[t].length) {
+				data[index++] = ecdata[t][xx];
+			}
+		}
+	}
+
+	return data;
+
+};
+
+
+
+  // สร้าง QR เป็น SVG (ระดับแก้ไขข้อผิดพลาด M)
+  function svg(text, opt) {
+    opt = opt || {}; var q = new QRCode(-1, QRErrorCorrectLevel.M); q.addData(String(text)); q.make();
+    var n = q.getModuleCount(), m = opt.margin == null ? 2 : opt.margin, s = n + m * 2, d = "";
+    for (var r = 0; r < n; r++) for (var c = 0; c < n; c++) if (q.isDark(r, c)) d += "M" + (c + m) + " " + (r + m) + "h1v1h-1z";
+    return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ' + s + ' ' + s + '" shape-rendering="crispEdges"><rect width="100%" height="100%" fill="#fff"/><path d="' + d + '" fill="#000"/></svg>';
+  }
+  return { svg: svg, QRCode: QRCode, L: QRErrorCorrectLevel };
+})();
+/* =====================================================================
+   POS ขายหน้าร้าน (v3.0) — เปิด/ปิดแยกแต่ละสาขา · ยอดขายเข้ารายรับรายวันอัตโนมัติ
+   ===================================================================== */
+const POS_DEFAULT = { qrMode: "none", promptpayId: "", merchantTemplate: "", incomeCategory: "", chQr: "", chCash: "", shopName: "", receiptFooter: "ขอบคุณที่ใช้บริการ", autoIncome: true, displayKey: "", menuCats: [] };
+const posDisplay = {}; // หน้าจอลูกค้า (เก็บในหน่วยความจำ) bid -> { mode, amount, svg, items, at }
+async function posConfig(bid) {
+  const r = (await pool.query("SELECT data FROM pos_config WHERE branch_id=$1", [bid])).rows[0];
+  let d = {}; try { d = JSON.parse(r ? r.data : "{}"); } catch (e) {}
+  const c = { ...POS_DEFAULT, ...d };
+  if (!c.displayKey) { c.displayKey = crypto.randomBytes(12).toString("hex"); await posSaveConfig(bid, c); }
+  return c;
+}
+async function posSaveConfig(bid, c) {
+  await pool.query("INSERT INTO pos_config (branch_id, data) VALUES ($1,$2) ON CONFLICT (branch_id) DO UPDATE SET data=EXCLUDED.data", [bid, JSON.stringify(c)]);
+}
+async function needPos(ctx, admin, level) {
+  await needBranch(ctx, admin ? "pos_admin" : "pos", level || "view");
+  if (!ctx.branch.pos_enabled) throw new HttpError(403, "สาขานี้ยังไม่ได้เปิดใช้ระบบ POS — เปิดได้ที่ Admin → จัดการสาขา → แก้ไขสาขา");
+}
+/* ---------- Thai QR / PromptPay (EMVCo TLV) — จาก POS เดิม ---------- */
+function qrCrc16(s) { let crc = 0xFFFF; for (let i = 0; i < s.length; i++) { crc ^= (s.charCodeAt(i) << 8); for (let b = 0; b < 8; b++) { crc = (crc & 0x8000) ? ((crc << 1) ^ 0x1021) : (crc << 1); crc &= 0xFFFF; } } return crc.toString(16).toUpperCase().padStart(4, "0"); }
+function qrTlvTop(str) { const out = []; let i = 0; while (i < str.length) { const tag = str.slice(i, i + 2), len = parseInt(str.slice(i + 2, i + 4), 10); if (isNaN(len)) throw new Error("โครงสร้าง QR ไม่ถูกต้อง"); out.push({ tag, value: str.slice(i + 4, i + 4 + len) }); i += 4 + len; } return out; }
+function qrTlv(tag, val) { return tag + String(val.length).padStart(2, "0") + val; }
+function promptPayPayload(id, amount) {
+  const clean = String(id).replace(/[^0-9]/g, "");
+  const [t, v] = clean.length === 13 ? ["02", clean] : clean.length === 15 ? ["03", clean] : ["01", "0066" + clean.replace(/^0/, "")];
+  let p = qrTlv("00", "01") + qrTlv("01", amount != null ? "12" : "11") + qrTlv("29", qrTlv("00", "A000000677010111") + qrTlv(t, v)) + qrTlv("53", "764");
+  if (amount != null) p += qrTlv("54", Number(amount).toFixed(2));
+  p += qrTlv("58", "TH") + "6304"; return p + qrCrc16(p);
+}
+// QR ร้านค้า (เช่น ถุงเงิน) — คงทุกฟิลด์เดิมไว้ แก้เฉพาะ 00/01/54/63
+function merchantPayload(tpl, amount) {
+  const f = qrTlvTop(tpl), order = [], map = {};
+  f.forEach(x => { if (!(x.tag in map)) order.push(x.tag); map[x.tag] = x.value; });
+  map["00"] = "01"; map["01"] = amount != null ? "12" : "11";
+  if (amount != null) { map["54"] = Number(amount).toFixed(2); if (order.indexOf("54") < 0) { const i = order.indexOf("58"); order.splice(i >= 0 ? i : order.length, 0, "54"); } }
+  const i63 = order.indexOf("63"); if (i63 >= 0) order.splice(i63, 1);
+  const body = order.map(t => qrTlv(t, map[t])).join("") + "6304"; return body + qrCrc16(body);
+}
+function checkMerchantTemplate(txt) {
+  const top = qrTlvTop(String(txt || "").trim()); const m = top.find(x => x.tag === "30");
+  if (!m) throw bad("ไม่พบข้อมูลบัญชีร้านค้าใน QR นี้ (ต้องเป็น QR ร้านค้า เช่น จากแอปถุงเงิน)");
+  const sub = qrTlvTop(m.value), aid = sub.find(x => x.tag === "00");
+  if (!aid || !aid.value.startsWith("A000000677010112")) throw bad("QR นี้ไม่ใช่มาตรฐาน Thai QR Payment สำหรับร้านค้า");
+  const code = sub.find(x => x.tag === "02"); return code ? code.value : "";
+}
+function posQrPayload(c, amount) {
+  if (c.qrMode === "merchant" && c.merchantTemplate) return merchantPayload(c.merchantTemplate, amount);
+  if (c.qrMode === "promptpay" && c.promptpayId) return promptPayPayload(c.promptpayId, amount);
+  return "";
+}
+/* ---------- เมนู ---------- */
+function posJson(v, d) { try { const x = JSON.parse(v || ""); return x == null ? d : x; } catch (e) { return d; } }
+function posMenuOut(r, soldMap) {
+  return { id: r.id, name: r.name, names: posJson(r.names_json, {}), category: r.category || "", price: Number(r.price), types: posJson(r.types_json, []), addons: posJson(r.addons_json, []),
+    dailyLimit: r.daily_limit == null ? null : Number(r.daily_limit), soldToday: soldMap ? (soldMap[r.id] || 0) : 0, soldout: !!r.soldout, active: !!r.active,
+    imageV: r.has_image ? Number(r.updated_at) || 1 : 0, sort: Number(r.sort_order) || 0 };
+}
+async function posSoldToday(bid, day) {
+  const { rows } = await pool.query("SELECT items_json FROM pos_orders WHERE branch_id=$1 AND order_date=$2 AND status IN ('paid','prepared')", [bid, day]);
+  const m = {}; rows.forEach(r => posJson(r.items_json, []).forEach(i => { if (i.menuId) m[i.menuId] = (m[i.menuId] || 0) + (Number(i.qty) || 0); })); return m;
+}
+async function posMenuList(bid, all) {
+  const sold = await posSoldToday(bid, todayBkk());
+  const { rows } = await pool.query(`SELECT id, branch_id, name, names_json, category, price, types_json, addons_json, daily_limit, soldout, active, sort_order, updated_at, (image IS NOT NULL AND image<>'') AS has_image
+    FROM pos_menu WHERE branch_id=$1 ${all ? "" : "AND active=TRUE"} ORDER BY sort_order, created_at`, [bid]);
+  return rows.map(r => posMenuOut(r, sold));
+}
+function posMenuFields(b) {
+  const name = str(b.name, 150); if (!name) throw bad("กรุณาใส่ชื่อเมนู");
+  const price = r2(num(b.price, NaN)); if (!(price >= 0)) throw bad("ราคาไม่ถูกต้อง");
+  const clean = (arr, what) => (Array.isArray(arr) ? arr : []).slice(0, 30).map(x => ({ name: str(x && x.name, 100), price: r2(num(x && x.price, 0)) })).filter(x => x.name).map(x => { if (x.price < 0) throw bad(what + " ราคาติดลบไม่ได้"); return x; });
+  const names = {}; ["en", "my", "lo"].forEach(k => { const v = str(b.names && b.names[k], 150); if (v) names[k] = v; });
+  const lim = b.dailyLimit === "" || b.dailyLimit == null ? null : Math.floor(num(b.dailyLimit, -1));
+  if (lim != null && lim < 0) throw bad("จำนวนขายต่อวันไม่ถูกต้อง");
+  return { name, names_json: JSON.stringify(names), category: str(b.category, 80), price, types_json: JSON.stringify(clean(b.types, "แบบ/ขนาด")), addons_json: JSON.stringify(clean(b.addons, "Add-on")),
+    daily_limit: lim, soldout: !!b.soldout, active: b.active !== false, image: b.image === undefined ? undefined : checkImg(b.image, 500000) };
+}
+/* ---------- ยอดขาย → รายรับรายวันอัตโนมัติ (แยกช่องทาง) ---------- */
+async function posSyncIncome(ctx, bid, day) {
+  const c = await posConfig(bid);
+  const { rows } = await pool.query("SELECT pay_channel, COUNT(*)::int AS n, SUM(total - COALESCE(refund_amount,0))::float AS net FROM pos_orders WHERE branch_id=$1 AND order_date=$2 AND status IN ('paid','prepared','refunded') GROUP BY pay_channel", [bid, day]);
+  const existing = (await pool.query("SELECT * FROM records WHERE branch_id=$1 AND source='pos' AND pos_key LIKE $2", [bid, "pos:" + day + ":%"])).rows;
+  const want = c.autoIncome === false ? [] : rows.filter(r => r.pay_channel && r2(r.net) > 0);
+  let cat = c.incomeCategory;
+  if (!cat) { const l = (await pool.query("SELECT name FROM lists WHERE branch_id=$1 AND kind='income_category' ORDER BY sort_order", [bid])).rows.map(x => x.name); cat = l.find(n => /ขาย|อาหาร|หน้าร้าน/.test(n)) || l[0] || "ยอดขาย"; }
+  const [y, mo, d] = day.split("-");
+  for (const r of want) {
+    const key = "pos:" + day + ":" + r.pay_channel, net = r2(r.net);
+    const items = [{ name: "ยอดขายหน้าร้าน (POS) " + r.n + " บิล", category: cat, qty: 1, unit: "วัน", price: net, amount: net }];
+    const ex = existing.find(e => e.pos_key === key);
+    const desc = "ยอดขาย POS " + d + "/" + mo + "/" + (Number(y) + 543) + " · " + r.pay_channel;
+    if (ex) await pool.query("UPDATE records SET items_json=$1, subtotal=$2, total=$2, category=$3, description=$4, updated_by=$5, updated_at=$6 WHERE id=$7", [JSON.stringify(items), net, cat, desc, "ระบบ POS", now(), ex.id]);
+    else {
+      const docNo = await nextDocNo(bid, "income", day);
+      await pool.query(`INSERT INTO records (id,branch_id,type,doc_no,rec_date,party,description,category,items_json,subtotal,discount,vat_mode,vat_amount,total,payment_channel,note,created_by,created_at,source,pos_key)
+        VALUES ($1,$2,'income',$3,$4,'ลูกค้าหน้าร้าน (POS)',$5,$6,$7,$8,0,'none',0,$8,$9,'สร้าง/อัปเดตอัตโนมัติจากยอดขาย POS',$10,$11,'pos',$12)`,
+        [uid(), bid, docNo, day, desc, cat, JSON.stringify(items), net, r.pay_channel, "ระบบ POS", now(), key]);
+    }
+  }
+  for (const e of existing) if (!want.some(r => "pos:" + day + ":" + r.pay_channel === e.pos_key)) await pool.query("DELETE FROM records WHERE id=$1", [e.id]);
+}
+function posOrderOut(r, full) {
+  return { id: r.id, queueNo: r.queue_no, date: r.order_date, items: posJson(r.items_json, []), subtotal: Number(r.subtotal), discount: Number(r.discount) || 0, total: Number(r.total),
+    status: r.status, payMethod: r.pay_method, payChannel: r.pay_channel || "", cashReceived: r.cash_received == null ? null : Number(r.cash_received), change: r.change_amount == null ? null : Number(r.change_amount),
+    hasSlip: !!r.has_slip, note: r.note || "", createdBy: r.created_by || "", createdAt: Number(r.created_at), preparedAt: Number(r.prepared_at) || null, preparedBy: r.prepared_by || "",
+    cancelledAt: Number(r.cancelled_at) || null, cancelledBy: r.cancelled_by || "", cancelReason: r.cancel_reason || "", refund: Number(r.refund_amount) || 0 };
+}
+const POS_ORDER_COLS = "id, branch_id, queue_no, order_date, items_json, subtotal, discount, total, status, pay_method, pay_channel, cash_received, change_amount, (slip IS NOT NULL AND slip<>'') AS has_slip, note, created_by, created_at, prepared_at, prepared_by, cancelled_at, cancelled_by, cancel_reason, refund_amount";
+async function posQueueLists(bid) {
+  const day = todayBkk();
+  const { rows } = await pool.query("SELECT queue_no, status, prepared_at FROM pos_orders WHERE branch_id=$1 AND order_date=$2 AND status IN ('paid','prepared') ORDER BY created_at", [bid, day]);
+  return { waiting: rows.filter(r => r.status === "paid").map(r => r.queue_no), ready: rows.filter(r => r.status === "prepared" && now() - Number(r.prepared_at) < 30 * 60000).map(r => r.queue_no).reverse().slice(0, 12) };
+}
+
+route("GET", B + "/pos/boot", async ctx => {
+  await needPos(ctx, false, "view");
+  const c = await posConfig(ctx.branch.id);
+  const ch = (await pool.query("SELECT name, is_credit FROM lists WHERE branch_id=$1 AND kind='payment_channel' ORDER BY sort_order", [ctx.branch.id])).rows;
+  return { config: { qrMode: c.qrMode, qrReady: !!posQrPayload(c, 1), promptpayId: c.promptpayId, merchantCode: c.merchantTemplate ? (() => { try { return checkMerchantTemplate(c.merchantTemplate); } catch (e) { return ""; } })() : "",
+      incomeCategory: c.incomeCategory, chQr: c.chQr, chCash: c.chCash, shopName: c.shopName || ctx.branch.name, receiptFooter: c.receiptFooter, autoIncome: c.autoIncome !== false, displayKey: c.displayKey, menuCats: c.menuCats || [] },
+    menu: await posMenuList(ctx.branch.id, can(ctx, "pos_admin", "view")), channels: ch.filter(x => !x.is_credit).map(x => x.name),
+    canAdmin: can(ctx, "pos_admin", "edit"), canSell: can(ctx, "pos", "edit"), today: todayBkk() };
+});
+route("GET", B + "/pos/menu/:id/image", async (ctx, req, res) => {
+  await needPos(ctx, false, "view");
+  const r = (await pool.query("SELECT image FROM pos_menu WHERE id=$1 AND branch_id=$2", [ctx.params.id, ctx.branch.id])).rows[0];
+  if (!r || !r.image) throw new HttpError(404, "ไม่มีรูป");
+  sendDataUrl(res, r.image); return undefined;
+});
+route("POST", B + "/pos/menu", async ctx => {
+  await needPos(ctx, true, "edit");
+  const f = posMenuFields(ctx.body || {}), id = uid();
+  await pool.query(`INSERT INTO pos_menu (id,branch_id,name,names_json,category,price,types_json,addons_json,daily_limit,soldout,active,image,sort_order,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$13,$13)`,
+    [id, ctx.branch.id, f.name, f.names_json, f.category, f.price, f.types_json, f.addons_json, f.daily_limit, f.soldout, f.active, f.image || null, now()]);
+  await logActivity(ctx, "pos_menu_add", "เพิ่มเมนู POS " + f.name + " ฿" + f.price, ctx.branch.id);
+  return { ok: true, id };
+});
+route("PUT", B + "/pos/menu/:id", async ctx => {
+  await needPos(ctx, true, "edit");
+  const cur = (await pool.query("SELECT id, name FROM pos_menu WHERE id=$1 AND branch_id=$2", [ctx.params.id, ctx.branch.id])).rows[0]; if (!cur) throw new HttpError(404, "ไม่พบเมนู");
+  const b = ctx.body || {};
+  if (Object.keys(b).every(k => ["soldout", "active"].includes(k))) { // สลับ หมด/ขาย หรือ เปิด/ปิด อย่างเดียว
+    if (b.soldout !== undefined) await pool.query("UPDATE pos_menu SET soldout=$1 WHERE id=$2", [!!b.soldout, cur.id]);
+    if (b.active !== undefined) await pool.query("UPDATE pos_menu SET active=$1 WHERE id=$2", [!!b.active, cur.id]);
+    await logActivity(ctx, "pos_menu_toggle", "เมนู " + cur.name + (b.soldout !== undefined ? (b.soldout ? " → หมด" : " → ขายต่อ") : "") + (b.active !== undefined ? (b.active ? " → เปิด" : " → ปิด") : ""), ctx.branch.id);
+    return { ok: true };
+  }
+  const f = posMenuFields(b);
+  await pool.query("UPDATE pos_menu SET name=$1,names_json=$2,category=$3,price=$4,types_json=$5,addons_json=$6,daily_limit=$7,soldout=$8,active=$9,updated_at=$10 WHERE id=$11",
+    [f.name, f.names_json, f.category, f.price, f.types_json, f.addons_json, f.daily_limit, f.soldout, f.active, now(), cur.id]);
+  if (f.image !== undefined) await pool.query("UPDATE pos_menu SET image=$1 WHERE id=$2", [f.image || null, cur.id]);
+  await logActivity(ctx, "pos_menu_edit", "แก้ไขเมนู POS " + f.name, ctx.branch.id);
+  return { ok: true };
+});
+route("DELETE", B + "/pos/menu/:id", async ctx => {
+  await needPos(ctx, true, "edit");
+  const r = (await pool.query("DELETE FROM pos_menu WHERE id=$1 AND branch_id=$2 RETURNING name", [ctx.params.id, ctx.branch.id])).rows[0];
+  if (r) await logActivity(ctx, "pos_menu_delete", "ลบเมนู POS " + r.name, ctx.branch.id);
+  return { ok: true };
+});
+route("POST", B + "/pos/menu-order", async ctx => {
+  await needPos(ctx, true, "edit");
+  const ids = (Array.isArray(ctx.body.ids) ? ctx.body.ids : []).map(String).slice(0, 500); let n = 0;
+  for (const id of ids) await pool.query("UPDATE pos_menu SET sort_order=$1 WHERE id=$2 AND branch_id=$3", [++n, id, ctx.branch.id]);
+  return { ok: true };
+});
+route("PUT", B + "/pos/config", async ctx => {
+  await needPos(ctx, true, "edit");
+  const c = await posConfig(ctx.branch.id), b = ctx.body || {};
+  if (b.qrMode !== undefined) { if (!["none", "promptpay", "merchant"].includes(b.qrMode)) throw bad("รูปแบบ QR ไม่ถูกต้อง"); c.qrMode = b.qrMode; }
+  if (b.promptpayId !== undefined) { const v = String(b.promptpayId).replace(/[^0-9]/g, ""); if (v && ![10, 13, 15].includes(v.length)) throw bad("พร้อมเพย์ต้องเป็นเบอร์มือถือ 10 หลัก หรือเลขบัตร/ผู้เสียภาษี 13 หลัก"); c.promptpayId = v; }
+  if (b.merchantTemplate !== undefined) { const v = String(b.merchantTemplate || "").trim(); if (v) checkMerchantTemplate(v); c.merchantTemplate = v; }
+  if (c.qrMode === "promptpay" && !c.promptpayId) throw bad("กรุณาใส่เลขพร้อมเพย์");
+  if (c.qrMode === "merchant" && !c.merchantTemplate) throw bad("กรุณาใส่ข้อมูล QR ร้านค้า");
+  for (const k of ["incomeCategory", "chQr", "chCash", "shopName", "receiptFooter"]) if (b[k] !== undefined) c[k] = str(b[k], 200);
+  if (b.autoIncome !== undefined) c.autoIncome = !!b.autoIncome;
+  if (Array.isArray(b.menuCats)) c.menuCats = b.menuCats.map(x => str(x, 80)).filter(Boolean).slice(0, 40);
+  if (b.newDisplayKey) c.displayKey = crypto.randomBytes(12).toString("hex");
+  await posSaveConfig(ctx.branch.id, c);
+  await logActivity(ctx, "pos_config", "ตั้งค่า POS" + (b.merchantTemplate !== undefined || b.promptpayId !== undefined || b.qrMode !== undefined ? " (บัญชีรับเงิน QR)" : ""), ctx.branch.id);
+  if (b.autoIncome !== undefined) { const days = (await pool.query("SELECT DISTINCT order_date FROM pos_orders WHERE branch_id=$1 AND order_date>=$2", [ctx.branch.id, dayBefore(todayBkk()).slice(0, 8) + "01"])).rows; for (const d of days) await posSyncIncome(ctx, ctx.branch.id, d.order_date); }
+  return { ok: true };
+});
+// QR สำหรับยอดเงิน + ขึ้นจอลูกค้า
+route("POST", B + "/pos/qr", async ctx => {
+  await needPos(ctx, false, "edit");
+  const c = await posConfig(ctx.branch.id), amount = r2(num(ctx.body.amount, NaN));
+  if (!(amount > 0)) throw bad("ยอดเงินไม่ถูกต้อง");
+  const payload = posQrPayload(c, amount); if (!payload) throw bad("ยังไม่ได้ตั้งค่าบัญชีรับเงิน QR — ตั้งได้ที่ POS → ตั้งค่า");
+  const svg = QRLib.svg(payload, { margin: 2 });
+  posDisplay[ctx.branch.id] = { mode: "pay", amount, svg, at: now() };
+  return { svg, payload };
+});
+route("POST", B + "/pos/display", async ctx => {
+  await needPos(ctx, false, "edit");
+  const b = ctx.body || {};
+  if (b.mode === "cart") posDisplay[ctx.branch.id] = { mode: "cart", amount: r2(num(b.amount, 0)), items: (Array.isArray(b.items) ? b.items : []).slice(0, 30).map(i => ({ name: str(i.name, 120), qty: num(i.qty, 1), total: r2(num(i.total, 0)) })), at: now() };
+  else if (b.mode === "done") posDisplay[ctx.branch.id] = { mode: "done", queueNo: str(b.queueNo, 10), amount: r2(num(b.amount, 0)), change: b.change == null ? null : r2(num(b.change, 0)), at: now() };
+  else posDisplay[ctx.branch.id] = { mode: "idle", at: now() };
+  return { ok: true };
+});
+// หน้าจอลูกค้า (สาธารณะ ใช้กุญแจลับของสาขา)
+route("GET", "/api/pos-display/:key", async ctx => {
+  const key = str(ctx.params.key, 64); if (!key) throw new HttpError(404, "ไม่พบ");
+  const r = (await pool.query("SELECT branch_id FROM pos_config WHERE data LIKE $1", ["%\"displayKey\":\"" + key.replace(/[^a-f0-9]/g, "") + "\"%"])).rows[0];
+  if (!r) throw new HttpError(404, "ลิงก์หน้าจอลูกค้าไม่ถูกต้อง หรือถูกเปลี่ยนแล้ว");
+  const b = (await pool.query("SELECT id, name, logo, color, pos_enabled FROM branches WHERE id=$1", [r.branch_id])).rows[0];
+  if (!b || !b.pos_enabled) throw new HttpError(404, "สาขานี้ปิด POS อยู่");
+  const c = await posConfig(b.id); let st = posDisplay[b.id] || { mode: "idle" };
+  if (st.mode === "done" && now() - st.at > 20000) st = { mode: "idle" };
+  if (st.mode === "pay" && now() - st.at > 10 * 60000) st = { mode: "idle" };
+  return { shop: c.shopName || b.name, logo: b.logo || "", color: b.color || "", state: st, queue: await posQueueLists(b.id), time: now() };
+});
+// รับชำระ → สร้างออเดอร์ + เลขคิว
+route("POST", B + "/pos/orders", async ctx => {
+  await needPos(ctx, false, "edit");
+  const b = ctx.body || {}, c = await posConfig(ctx.branch.id), day = todayBkk();
+  const menu = (await pool.query("SELECT * FROM pos_menu WHERE branch_id=$1", [ctx.branch.id])).rows;
+  const sold = await posSoldToday(ctx.branch.id, day), need = {};
+  const raw = (Array.isArray(b.items) ? b.items : []).slice(0, 100); if (!raw.length) throw bad("ยังไม่มีรายการในตะกร้า");
+  const items = [];
+  for (const l of raw) {
+    const m = menu.find(x => x.id === l.menuId); if (!m || !m.active) throw bad("เมนูบางรายการถูกปิดไปแล้ว — โหลดหน้าใหม่");
+    if (m.soldout) throw bad(m.name + " หมดแล้ว");
+    const qty = Math.floor(num(l.qty, 0)); if (qty < 1 || qty > 999) throw bad("จำนวนไม่ถูกต้อง (" + m.name + ")");
+    const types = posJson(m.types_json, []), addonsDef = posJson(m.addons_json, []);
+    let unit = Number(m.price), typeName = "";
+    if (types.length) { const t = types.find(x => x.name === l.type) || types[0]; unit = Number(t.price); typeName = t.name; }
+    const addons = (Array.isArray(l.addons) ? l.addons : []).map(a => { const d = addonsDef.find(x => x.name === (a && a.name)); const q = Math.floor(num(a && a.qty, 0)); return d && q > 0 ? { name: d.name, price: Number(d.price), qty: q } : null; }).filter(Boolean);
+    const lineTotal = r2(unit * qty + addons.reduce((s, a) => s + a.price * a.qty, 0));
+    need[m.id] = (need[m.id] || 0) + qty;
+    if (m.daily_limit != null && (sold[m.id] || 0) + need[m.id] > Number(m.daily_limit)) { const left = Math.max(0, Number(m.daily_limit) - (sold[m.id] || 0)); throw bad(m.name + (left ? " เหลือขายได้อีก " + left : " ขายครบจำนวนวันนี้แล้ว")); }
+    items.push({ menuId: m.id, name: m.name, type: typeName, price: unit, qty, addons, note: str(l.note, 200), total: lineTotal });
+  }
+  const subtotal = r2(items.reduce((s, i) => s + i.total, 0));
+  const discount = r2(Math.min(subtotal, Math.max(0, num(b.discount, 0)))), total = r2(subtotal - discount);
+  const method = ["qr", "cash", "other"].includes(b.payMethod) ? b.payMethod : "cash";
+  const ch = (await pool.query("SELECT name, is_credit FROM lists WHERE branch_id=$1 AND kind='payment_channel' ORDER BY sort_order", [ctx.branch.id])).rows.filter(x => !x.is_credit).map(x => x.name);
+  let channel = method === "qr" ? (c.chQr || ch.find(n => /โอน|พร้อมเพย์|QR|ธนาคาร/i.test(n)) || ch[0]) : method === "cash" ? (c.chCash || ch.find(n => /สด/.test(n)) || ch[0]) : str(b.payChannel, 120);
+  if (!channel || !ch.includes(channel)) throw bad("กรุณาเลือกช่องทางรับเงิน (ตั้งช่องทางได้ที่ “หมวด & ช่องทาง”)");
+  let cash = null, change = null;
+  if (method === "cash" && b.cashReceived !== "" && b.cashReceived != null) { cash = r2(num(b.cashReceived, NaN)); if (!(cash >= total)) throw bad("รับเงินมาไม่พอ"); change = r2(cash - total); }
+  const slip = b.slip ? checkImg(b.slip, 1500000) : null;
+  const q = (await pool.query("INSERT INTO pos_counters (branch_id, day, n) VALUES ($1,$2,1) ON CONFLICT (branch_id, day) DO UPDATE SET n=pos_counters.n+1 RETURNING n", [ctx.branch.id, day])).rows[0].n;
+  const queueNo = String(q).padStart(3, "0"), id = uid();
+  await pool.query(`INSERT INTO pos_orders (id,branch_id,queue_no,order_date,items_json,subtotal,discount,total,status,pay_method,pay_channel,cash_received,change_amount,slip,note,created_by,created_at,refund_amount)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'paid',$9,$10,$11,$12,$13,$14,$15,$16,0)`, [id, ctx.branch.id, queueNo, day, JSON.stringify(items), subtotal, discount, total, method, channel, cash, change, slip, str(b.note, 300), ctx.session.actor, now()]);
+  await posSyncIncome(ctx, ctx.branch.id, day);
+  posDisplay[ctx.branch.id] = { mode: "done", queueNo, amount: total, change, at: now() };
+  await logActivity(ctx, "pos_sale", "ขาย POS คิว " + queueNo + " ฿" + total.toFixed(2) + " · " + channel + " · " + items.map(i => i.name + "×" + i.qty).slice(0, 4).join(", "), ctx.branch.id);
+  const o = (await pool.query("SELECT " + POS_ORDER_COLS + " FROM pos_orders WHERE id=$1", [id])).rows[0];
+  return { ok: true, order: posOrderOut(o) };
+});
+route("GET", B + "/pos/orders", async ctx => {
+  await needPos(ctx, false, "view");
+  const from = isDate(ctx.query.from) ? ctx.query.from : todayBkk(), to = isDate(ctx.query.to) ? ctx.query.to : from;
+  const st = str(ctx.query.status, 20);
+  const params = [ctx.branch.id, from, to]; let w = "branch_id=$1 AND order_date BETWEEN $2 AND $3";
+  if (st) { params.push(st); w += " AND status=$" + params.length; }
+  const { rows } = await pool.query("SELECT " + POS_ORDER_COLS + " FROM pos_orders WHERE " + w + " ORDER BY created_at DESC LIMIT 2000", params);
+  return { orders: rows.map(posOrderOut) };
+});
+route("GET", B + "/pos/orders/:id/slip", async (ctx, req, res) => {
+  await needPos(ctx, false, "view");
+  const r = (await pool.query("SELECT slip FROM pos_orders WHERE id=$1 AND branch_id=$2", [ctx.params.id, ctx.branch.id])).rows[0];
+  if (!r || !r.slip) throw new HttpError(404, "ไม่มีสลิป");
+  sendDataUrl(res, r.slip); return undefined;
+});
+async function posOrderFor(ctx) {
+  const o = (await pool.query("SELECT * FROM pos_orders WHERE id=$1 AND branch_id=$2", [ctx.params.id, ctx.branch.id])).rows[0];
+  if (!o) throw new HttpError(404, "ไม่พบออเดอร์"); return o;
+}
+route("POST", B + "/pos/orders/:id/prepared", async ctx => {
+  await needPos(ctx, false, "edit"); const o = await posOrderFor(ctx);
+  if (o.status !== "paid") throw bad("ออเดอร์นี้ไม่ได้รอทำ");
+  await pool.query("UPDATE pos_orders SET status='prepared', prepared_at=$1, prepared_by=$2 WHERE id=$3", [now(), ctx.session.actor, o.id]);
+  return { ok: true };
+});
+route("POST", B + "/pos/orders/:id/unprepare", async ctx => {
+  await needPos(ctx, false, "edit"); const o = await posOrderFor(ctx);
+  if (o.status !== "prepared") throw bad("ออเดอร์นี้ยังไม่เสร็จ");
+  await pool.query("UPDATE pos_orders SET status='paid', prepared_at=NULL, prepared_by=NULL WHERE id=$1", [o.id]);
+  return { ok: true };
+});
+// ยกเลิกบิล (คืนเงินเต็ม) หรือคืนเงินบางส่วน — ยอดรายรับวันนั้นปรับให้อัตโนมัติ
+route("POST", B + "/pos/orders/:id/cancel", async ctx => {
+  await needPos(ctx, false, "edit"); const o = await posOrderFor(ctx), b = ctx.body || {};
+  if (!["paid", "prepared", "refunded"].includes(o.status)) throw bad("ออเดอร์นี้ยกเลิกไปแล้ว");
+  if (o.order_date !== todayBkk() && !can(ctx, "pos_admin", "edit")) throw new HttpError(403, "ยกเลิก/คืนเงินบิลของวันก่อนได้เฉพาะผู้ดูแล POS");
+  const reason = str(b.reason, 300); if (!reason) throw bad("กรุณาใส่เหตุผล");
+  const total = Number(o.total), partial = b.amount !== undefined && b.amount !== "" && b.amount != null;
+  if (partial) {
+    const amt = r2(num(b.amount, NaN)), done = Number(o.refund_amount) || 0;
+    if (!(amt > 0) || amt + done > total + 1e-9) throw bad("ยอดคืนเงินต้องมากกว่า 0 และไม่เกิน " + r2(total - done).toFixed(2));
+    const full = Math.abs(amt + done - total) < 0.005;
+    await pool.query("UPDATE pos_orders SET refund_amount=$1, status=$2, cancel_reason=$3, cancelled_by=$4, cancelled_at=$5 WHERE id=$6", [r2(amt + done), full ? "cancelled" : "refunded", reason, ctx.session.actor, now(), o.id]);
+    await logActivity(ctx, "pos_refund", "คืนเงิน POS คิว " + o.queue_no + " ฿" + amt.toFixed(2) + " (" + reason + ")", ctx.branch.id);
+  } else {
+    await pool.query("UPDATE pos_orders SET status='cancelled', refund_amount=total, cancel_reason=$1, cancelled_by=$2, cancelled_at=$3 WHERE id=$4", [reason, ctx.session.actor, now(), o.id]);
+    await logActivity(ctx, "pos_cancel", "ยกเลิกบิล POS คิว " + o.queue_no + " ฿" + total.toFixed(2) + " (" + reason + ")", ctx.branch.id);
+  }
+  await posSyncIncome(ctx, ctx.branch.id, o.order_date);
+  return { ok: true };
+});
+route("GET", B + "/pos/report", async ctx => {
+  await needPos(ctx, false, "view");
+  const { from, to } = rangeOf(ctx.query);
+  const { rows } = await pool.query("SELECT order_date, items_json, total, refund_amount, status, pay_channel, created_at FROM pos_orders WHERE branch_id=$1 AND order_date BETWEEN $2 AND $3", [ctx.branch.id, from, to]);
+  const ok = rows.filter(r => r.status !== "cancelled");
+  const days = {}, menus = {}, chs = {}, hours = {};
+  let gross = 0, refunds = 0, bills = 0;
+  for (const r of ok) {
+    const net = Number(r.total) - (Number(r.refund_amount) || 0); gross += Number(r.total); refunds += Number(r.refund_amount) || 0; bills++;
+    const d = days[r.order_date] = days[r.order_date] || { date: r.order_date, bills: 0, total: 0 }; d.bills++; d.total += net;
+    const c = chs[r.pay_channel] = chs[r.pay_channel] || { name: r.pay_channel, bills: 0, total: 0 }; c.bills++; c.total += net;
+    const h = new Date(Number(r.created_at) + 7 * 3600000).getUTCHours(); hours[h] = (hours[h] || 0) + net;
+    posJson(r.items_json, []).forEach(i => { const m = menus[i.name] = menus[i.name] || { name: i.name, qty: 0, total: 0 }; m.qty += Number(i.qty) || 0; m.total += Number(i.total) || 0; });
+  }
+  const cancelled = rows.filter(r => r.status === "cancelled");
+  const R = o => Object.values(o).map(x => ({ ...x, total: r2(x.total) }));
+  return { from, to, bills, gross: r2(gross), refunds: r2(refunds), net: r2(gross - refunds), avgBill: bills ? r2((gross - refunds) / bills) : 0,
+    cancelled: { bills: cancelled.length, total: r2(cancelled.reduce((a, r) => a + Number(r.total), 0)) },
+    days: R(days).sort((a, b) => a.date.localeCompare(b.date)), menus: R(menus).sort((a, b) => b.total - a.total), channels: R(chs).sort((a, b) => b.total - a.total),
+    hours: Object.keys(hours).map(h => ({ hour: Number(h), total: r2(hours[h]) })).sort((a, b) => a.hour - b.hour) };
+});
+// นำเข้าเมนู + บัญชี QR จาก POS เดิม (ลิงก์ของระบบ POS-Restaurant)
+route("POST", B + "/pos/import", async ctx => {
+  await needPos(ctx, true, "edit");
+  let base = String(ctx.body.url || "").trim().replace(/\/+$/, "").replace(/#.*$/, "");
+  if (!/^https?:\/\/[^\s/]+/.test(base)) base = "https://" + base.replace(/^\/+/, "");
+  if (!/^https:\/\/[a-z0-9.-]+(:\d+)?$/i.test(base) && !/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(base)) throw bad("ลิงก์ไม่ถูกต้อง — ใส่เฉพาะชื่อเว็บ เช่น pos-restaurant-production.up.railway.app");
+  const get = async p => { const ac = new AbortController(); const t = setTimeout(() => ac.abort(), 20000);
+    try { const r = await fetch(base + p, { signal: ac.signal }); if (!r.ok) throw new Error("HTTP " + r.status); return await r.json(); } catch (e) { throw bad("เปิด " + base + p + " ไม่ได้: " + e.message); } finally { clearTimeout(t); } };
+  const [st, menu] = await Promise.all([get("/api/settings"), get("/api/menu")]);
+  if (!Array.isArray(menu)) throw bad("ลิงก์นี้ไม่ใช่ระบบ POS เดิม");
+  const existing = new Set((await pool.query("SELECT lower(name) AS n FROM pos_menu WHERE branch_id=$1", [ctx.branch.id])).rows.map(r => r.n));
+  let added = 0, skipped = 0, n = now();
+  for (const m of menu) {
+    const name = str(m.name, 150); if (!name || existing.has(name.toLowerCase())) { skipped++; continue; }
+    const types = (Array.isArray(m.types) ? m.types : []).map(t => ({ name: str(t.name, 100), price: r2(num(t.price, 0)) })).filter(t => t.name);
+    const addons = (Array.isArray(m.addons) ? m.addons : []).map(t => ({ name: str(t.name, 100), price: r2(num(t.price, 0)) })).filter(t => t.name);
+    let img = null; if (m.imageUrl && /^data:image\//.test(m.imageUrl) && m.imageUrl.length < 700000) img = m.imageUrl;
+    const single = types.length === 1 && /ธรรมดา/.test(types[0].name);
+    await pool.query(`INSERT INTO pos_menu (id,branch_id,name,names_json,category,price,types_json,addons_json,daily_limit,soldout,active,image,sort_order,created_at,updated_at) VALUES ($1,$2,$3,'{}','',$4,$5,$6,NULL,FALSE,$7,$8,$9,$9,$9)`,
+      [uid(), ctx.branch.id, name, r2(num(single ? types[0].price : (types[0] ? Math.min(...types.map(t => t.price)) : m.price), 0)), JSON.stringify(single ? [] : types), JSON.stringify(addons), m.active !== false, img, n + (added++)]);
+  }
+  const c = await posConfig(ctx.branch.id); let qr = "";
+  if (st && st.qrMode === "merchant" && st.qrMerchantTemplate) { try { checkMerchantTemplate(st.qrMerchantTemplate); c.qrMode = "merchant"; c.merchantTemplate = st.qrMerchantTemplate; qr = "QR ร้านค้า"; } catch (e) {} }
+  else if (st && st.qrId) { c.qrMode = "promptpay"; c.promptpayId = String(st.qrId).replace(/[^0-9]/g, ""); qr = "พร้อมเพย์ " + c.promptpayId; }
+  if (st && st.shopName && !c.shopName) c.shopName = str(st.shopName, 200);
+  await posSaveConfig(ctx.branch.id, c);
+  await logActivity(ctx, "pos_import", "นำเข้าจาก POS เดิม " + base + ": เมนู " + added + " รายการ" + (qr ? " + " + qr : ""), ctx.branch.id);
+  return { ok: true, added, skipped, qr };
+});
+
+/* ---------------- ธุรกิจ (v2.9) ---------------- */
+function bizOut(r) { return { id: r.id, name: r.name, address: r.address || "", taxId: r.tax_id || "", phone: r.phone || "", logo: r.logo || "", kind: r.kind || "", createdAt: Number(r.created_at) }; }
+async function bizOfBranch(bid) {
+  const r = (await pool.query("SELECT z.* FROM businesses z JOIN branches b ON b.business_id=z.id WHERE b.id=$1", [bid])).rows[0];
+  return r || (await pool.query("SELECT * FROM businesses ORDER BY sort_order, created_at LIMIT 1")).rows[0];
+}
+const companyOfBiz = z => ({ name: z.name, address: z.address || "", taxId: z.tax_id || "", phone: z.phone || "", logo: z.logo || "", businessId: z.id });
 /* ---------------- public ---------------- */
 route("GET", "/api/health", async () => {
   const r = await pool.query("SELECT 1 AS ok"); return { ok: true, connected: Number(r.rows[0].ok) === 1, build: BUILD_ID };
 });
 route("GET", "/api/public/info", async () => {
-  const s = await getSettings();
-  const { rows } = await pool.query("SELECT id, code, name, color, logo FROM branches WHERE active=TRUE ORDER BY sort_order, created_at");
-  return { company: { name: s.company_name, logo: s.company_logo }, branches: rows, build: BUILD_ID };
+  const { rows } = await pool.query("SELECT id, code, name, color, logo, business_id AS \"businessId\" FROM branches WHERE active=TRUE ORDER BY sort_order, created_at");
+  const biz = (await pool.query("SELECT id, name, logo FROM businesses ORDER BY sort_order, created_at")).rows;
+  const main = biz[0] || { name: "", logo: "" };
+  return { company: { name: main.name, logo: main.logo || "" }, businesses: biz.filter(z => rows.some(b => b.businessId === z.id)).map(z => ({ id: z.id, name: z.name, logo: z.logo || "" })), branches: rows, build: BUILD_ID };
 });
 
 /* ---------------- branch auth ---------------- */
@@ -433,6 +2064,14 @@ route("POST", "/api/branch/login", async (ctx, req) => {
   return { token, mustChange: !!u.must_change, user: { username: u.username, name: u.name }, branch: { id: br.id, name: br.name, code: br.code, color: br.color } };
 });
 // ผู้ใช้เปลี่ยนรหัสผ่านของตัวเอง
+// ผู้ใช้ตั้งรูปโปรไฟล์ของตัวเอง (v2.8)
+route("POST", "/api/user/photo", async ctx => {
+  const s = ctx.session;
+  if (!s || s.kind !== "user") throw new HttpError(401, "กรุณาเข้าสู่ระบบด้วยชื่อผู้ใช้");
+  const v = checkImg(ctx.body && ctx.body.photo, 300000);
+  await pool.query("UPDATE users SET photo=$1 WHERE id=$2", [v || null, s.user_id]);
+  return { ok: true };
+});
 route("POST", "/api/user/change-password", async ctx => {
   const s = ctx.session;
   if (!s || s.kind !== "user") throw new HttpError(401, "กรุณาเข้าสู่ระบบ");
@@ -469,10 +2108,12 @@ route("GET", B + "/info", async ctx => {
   const s = await getSettings(); const b = ctx.branch, ss = ctx.session;
   return { branch: { id: b.id, code: b.code, name: b.name, address: b.address, phone: b.phone, taxId: b.tax_id, color: b.color, logo: b.logo || "",
       checkin: { enabled: !!b.checkin_enabled, lat: b.checkin_lat, lng: b.checkin_lng, radius: Number(b.checkin_radius) || 100, workStart: b.work_start || "09:00", lateGrace: Number(b.late_grace) || 0 } },
-    company: { name: s.company_name, address: s.company_address, taxId: s.company_tax_id, phone: s.company_phone, logo: s.company_logo },
+    company: companyOfBiz(await bizOfBranch(b.id)), posEnabled: !!b.pos_enabled,
     sso: { rate: num(s.sso_rate, 5), min: num(s.sso_min, 1650), max: num(s.sso_max, 17500) }, isAdmin: !!ss.isAdmin,
     me: { kind: ss.kind, name: ss.kind === "user" ? (ss.user_name || ss.user_username) : ss.isAdmin ? (ss.admin_name || ss.username) : "ผู้จัดการสาขา",
-      username: ss.user_username || ss.username || "", mustChange: !!(ss.kind === "user" && ss.user_must_change) },
+      username: ss.user_username || ss.username || "", mustChange: !!(ss.kind === "user" && ss.user_must_change),
+      photo: ss.kind === "user" ? ((await pool.query("SELECT photo FROM users WHERE id=$1", [ss.user_id])).rows[0] || {}).photo || "" : "",
+      canPhoto: ss.kind === "user" },
     perms: ctx.perms.menus, approve: ctx.perms.approve, full: !!ctx.perms.full };
 });
 // จำนวนรายการรออนุมัติ (ตัวเลขแจ้งเตือนบนเมนู)
@@ -661,7 +2302,7 @@ route("PUT", "/api/admin/settings", async ctx => {
 
 /* ---------------- admin: branches ---------------- */
 function branchOut(r) {
-  return { id: r.id, code: r.code, name: r.name, address: r.address, phone: r.phone, taxId: r.tax_id, color: r.color, active: r.active, logo: r.logo || "",
+  return { id: r.id, code: r.code, name: r.name, address: r.address, phone: r.phone, taxId: r.tax_id, color: r.color, active: r.active, logo: r.logo || "", businessId: r.business_id || "", posEnabled: !!r.pos_enabled,
     createdAt: Number(r.created_at), lastLoginAt: Number(r.last_login_at) || null, passChangedAt: Number(r.pass_changed_at) || null,
     checkin: { enabled: !!r.checkin_enabled, lat: r.checkin_lat == null ? null : Number(r.checkin_lat), lng: r.checkin_lng == null ? null : Number(r.checkin_lng),
       radius: Number(r.checkin_radius) || 100, workStart: r.work_start || "09:00", lateGrace: Number(r.late_grace) || 0 } };
@@ -684,6 +2325,41 @@ route("PUT", "/api/admin/branches/:id/checkin", async ctx => {
   await logActivity(ctx, "branch_checkin", "ตั้งค่าเช็คอินสาขา " + rows[0].name + ": " + (enabled ? "เปิด" : "ปิด") + " ระยะ " + radius + " ม. เข้างาน " + ws + " ผ่อนผัน " + grace + " นาที", ctx.params.id);
   return { ok: true };
 });
+route("GET", "/api/admin/businesses", async ctx => {
+  needAdmin(ctx);
+  const { rows } = await pool.query("SELECT z.*, (SELECT COUNT(*)::int FROM branches b WHERE b.business_id=z.id) AS n FROM businesses z ORDER BY sort_order, created_at");
+  return { businesses: rows.map(r => ({ ...bizOut(r), branchCount: Number(r.n) || 0 })) };
+});
+function bizFields(b) {
+  const name = str(b.name, 150); if (!name) throw bad("กรุณาใส่ชื่อธุรกิจ");
+  return { name, address: str(b.address, 400), tax_id: str(b.taxId, 30), phone: str(b.phone, 40), kind: str(b.kind, 40), logo: b.logo === undefined ? undefined : checkImg(b.logo, 1500000) };
+}
+route("POST", "/api/admin/businesses", async ctx => {
+  needAdmin(ctx);
+  const f = bizFields(ctx.body || {}), id = uid();
+  await pool.query("INSERT INTO businesses (id,name,address,tax_id,phone,logo,kind,sort_order,created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$8)", [id, f.name, f.address, f.tax_id, f.phone, f.logo || null, f.kind, now()]);
+  await logActivity(ctx, "biz_add", "สร้างธุรกิจ " + f.name);
+  return { ok: true, id };
+});
+route("PUT", "/api/admin/businesses/:id", async ctx => {
+  needAdmin(ctx);
+  const cur = (await pool.query("SELECT * FROM businesses WHERE id=$1", [ctx.params.id])).rows[0]; if (!cur) throw new HttpError(404, "ไม่พบธุรกิจ");
+  const f = bizFields(ctx.body || {});
+  await pool.query("UPDATE businesses SET name=$1,address=$2,tax_id=$3,phone=$4,kind=$5 WHERE id=$6", [f.name, f.address, f.tax_id, f.phone, f.kind, cur.id]);
+  if (f.logo !== undefined) await pool.query("UPDATE businesses SET logo=$1 WHERE id=$2", [f.logo || null, cur.id]);
+  await logActivity(ctx, "biz_edit", "แก้ไขธุรกิจ " + f.name);
+  return { ok: true };
+});
+route("DELETE", "/api/admin/businesses/:id", async ctx => {
+  needAdmin(ctx);
+  const cur = (await pool.query("SELECT * FROM businesses WHERE id=$1", [ctx.params.id])).rows[0]; if (!cur) throw new HttpError(404, "ไม่พบธุรกิจ");
+  const n = Number((await pool.query("SELECT COUNT(*)::int AS c FROM branches WHERE business_id=$1", [cur.id])).rows[0].c);
+  if (n) throw bad("ธุรกิจนี้ยังมี " + n + " สาขา — ย้ายหรือลบสาขาก่อน");
+  if (Number((await pool.query("SELECT COUNT(*)::int AS c FROM businesses")).rows[0].c) <= 1) throw bad("ต้องมีอย่างน้อย 1 ธุรกิจ");
+  await pool.query("DELETE FROM businesses WHERE id=$1", [cur.id]);
+  await logActivity(ctx, "biz_delete", "ลบธุรกิจ " + cur.name);
+  return { ok: true };
+});
 route("GET", "/api/admin/branches", async ctx => {
   needAdmin(ctx);
   const { rows } = await pool.query("SELECT * FROM branches ORDER BY sort_order, created_at");
@@ -698,10 +2374,15 @@ route("POST", "/api/admin/branches", async ctx => {
   needAdmin(ctx);
   const f = branchFields(ctx.body); const pw = checkNewPassword(ctx.body.password);
   const id = uid();
-  await pool.query("INSERT INTO branches (id,code,name,address,phone,tax_id,color,pass_hash,active,sort_order,created_at,pass_changed_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,TRUE,$9,$9,$9)",
-    [id, f.code, f.name, f.address, f.phone, f.tax_id, f.color, hashPw(pw), now()]);
+  const bz = (await pool.query("SELECT id FROM businesses WHERE id=$1", [str(ctx.body.businessId, 100)])).rows[0] || (await pool.query("SELECT id FROM businesses ORDER BY sort_order, created_at LIMIT 1")).rows[0];
+  let copyFrom = str(ctx.body.copyFrom, 100) || null;
+  if (copyFrom) { const cb = (await pool.query("SELECT business_id FROM branches WHERE id=$1", [copyFrom])).rows[0]; if (!cb || cb.business_id !== bz.id) copyFrom = null; } // ธุรกิจใหม่ = เริ่มหมวดมาตรฐาน ไม่คัดลอกข้ามธุรกิจ
+  if (!copyFrom) { const sib = (await pool.query("SELECT id FROM branches WHERE business_id=$1 ORDER BY sort_order, created_at LIMIT 1", [bz.id])).rows[0]; if (sib && (await getSettings()).lists_sync_all === "1") copyFrom = sib.id; }
+  await pool.query("INSERT INTO branches (id,code,name,address,phone,tax_id,color,pass_hash,active,sort_order,created_at,pass_changed_at,business_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,TRUE,$9,$9,$9,$10)",
+    [id, f.code, f.name, f.address, f.phone, f.tax_id, f.color, hashPw(pw), now(), bz.id]);
   if (f.logo) await pool.query("UPDATE branches SET logo=$1 WHERE id=$2", [f.logo, id]);
-  await seedLists(id, str(ctx.body.copyFrom, 100) || null);
+  if (ctx.body.posEnabled) await pool.query("UPDATE branches SET pos_enabled=TRUE WHERE id=$1", [id]);
+  await seedLists(id, copyFrom);
   await logActivity(ctx, "branch_add", "สร้างสาขา " + f.name, id);
   return { ok: true, id };
 });
@@ -718,6 +2399,15 @@ route("PUT", "/api/admin/branches/:id", async ctx => {
   const f = branchFields(ctx.body);
   await pool.query("UPDATE branches SET code=$1,name=$2,address=$3,phone=$4,tax_id=$5,color=$6 WHERE id=$7", [f.code, f.name, f.address, f.phone, f.tax_id, f.color, ctx.params.id]);
   if (f.logo !== undefined) await pool.query("UPDATE branches SET logo=$1 WHERE id=$2", [f.logo || null, ctx.params.id]);
+  if (ctx.body.posEnabled !== undefined && !!ctx.body.posEnabled !== !!cur.rows[0].pos_enabled) {
+    await pool.query("UPDATE branches SET pos_enabled=$1 WHERE id=$2", [!!ctx.body.posEnabled, ctx.params.id]);
+    await logActivity(ctx, "pos_toggle", (ctx.body.posEnabled ? "เปิด" : "ปิด") + "ใช้ระบบ POS สาขา " + f.name, ctx.params.id);
+  }
+  if (ctx.body.businessId && ctx.body.businessId !== cur.rows[0].business_id) {
+    const bz = (await pool.query("SELECT id, name FROM businesses WHERE id=$1", [str(ctx.body.businessId, 100)])).rows[0]; if (!bz) throw bad("ไม่พบธุรกิจ");
+    await pool.query("UPDATE branches SET business_id=$1 WHERE id=$2", [bz.id, ctx.params.id]);
+    await logActivity(ctx, "branch_move_biz", "ย้ายสาขา " + f.name + " ไปธุรกิจ " + bz.name, ctx.params.id);
+  }
   await logActivity(ctx, "branch_edit", "แก้ไขข้อมูลสาขา " + f.name, ctx.params.id);
   return { ok: true };
 });
@@ -744,7 +2434,7 @@ route("DELETE", "/api/admin/branches/:id", async ctx => {
   if (!verifyPw(String(ctx.body.adminPassword || ""), me.rows[0].pass_hash)) throw bad("รหัสผ่านผู้ดูแลไม่ถูกต้อง");
   if (str(ctx.body.confirmName, 200) !== rows[0].name) throw bad("พิมพ์ชื่อสาขาให้ตรงเพื่อยืนยันการลบ");
   const id = rows[0].id;
-  for (const t of ["files", "records", "lists", "stock_moves", "stock_items", "payroll_items", "payroll_runs", "employees", "doc_counters", "sessions", "transfers", "leaves", "advances", "attendance", "card_plans", "emp_files", "shop_items"]) {
+  for (const t of ["files", "records", "lists", "stock_moves", "stock_items", "payroll_items", "payroll_runs", "employees", "doc_counters", "sessions", "transfers", "leaves", "advances", "attendance", "card_plans", "emp_files", "shop_items", "purchase_orders", "pos_config", "pos_menu", "pos_orders", "pos_counters"]) {
     await pool.query("DELETE FROM " + t + " WHERE branch_id=$1", [id]);
   }
   await pool.query("DELETE FROM branches WHERE id=$1", [id]);
@@ -756,24 +2446,27 @@ route("DELETE", "/api/admin/branches/:id", async ctx => {
 route("GET", "/api/admin/overview", async ctx => {
   needAdmin(ctx);
   const { from, to } = rangeOf(ctx.query);
-  const br = await pool.query("SELECT id, code, name, color, active FROM branches ORDER BY sort_order, created_at");
+  const biz = str(ctx.query.biz, 100);
+  const br = await pool.query("SELECT id, code, name, color, active, logo, business_id FROM branches" + (biz ? " WHERE business_id=$1" : "") + " ORDER BY sort_order, created_at", biz ? [biz] : []);
   const sums = await pool.query(`SELECT branch_id, type, SUM(total)::float AS s, COUNT(*)::int AS c FROM records WHERE rec_date BETWEEN $1 AND $2 GROUP BY branch_id, type`, [from, to]);
   const stock = await pool.query(`SELECT branch_id, SUM(qty*avg_cost)::float AS v, SUM(CASE WHEN active AND qty<=min_qty AND min_qty>0 THEN 1 ELSE 0 END)::int AS low FROM stock_items GROUP BY branch_id`);
   const emp = await pool.query(`SELECT branch_id, COUNT(*)::int AS c FROM employees WHERE active=TRUE GROUP BY branch_id`);
   const due = await pool.query(`SELECT branch_id, type, SUM(total)::float AS s FROM records WHERE due_date IS NOT NULL AND due_date<>'' AND settled_at IS NULL GROUP BY branch_id, type`);
   const months = eachMonth(from, to);
   const monthly = await pool.query(`SELECT branch_id, substr(rec_date,1,7) AS m, type, SUM(total)::float AS s FROM records WHERE rec_date BETWEEN $1 AND $2 GROUP BY branch_id, m, type`, [from, to]);
+  const adjs = {}; for (const b of br.rows) adjs[b.id] = await stockAdjust(b.id, from, to);
   const out = br.rows.map(b => {
     const g = t => r2(sums.rows.filter(x => x.branch_id === b.id && x.type === t).reduce((a, x) => a + Number(x.s), 0));
     const st = stock.rows.find(x => x.branch_id === b.id) || {};
     const income = g("income"), expense = g("expense"), invest = g("invest");
-    return { id: b.id, code: b.code, name: b.name, color: b.color, active: b.active, income, expense, invest, net: r2(income - expense),
+    const sa = adjs[b.id];
+    return { id: b.id, code: b.code, name: b.name, color: b.color, logo: b.logo || "", businessId: b.business_id, active: b.active, income, expense, invest, cashNet: r2(income - expense), stockAdj: sa.adj, net: r2(income - expense + sa.adj),
       stockValue: r2(st.v), lowStock: Number(st.low) || 0, employees: Number((emp.rows.find(x => x.branch_id === b.id) || {}).c) || 0,
       payable: r2((due.rows.find(x => x.branch_id === b.id && x.type !== "income") || {}).s), receivable: r2((due.rows.find(x => x.branch_id === b.id && x.type === "income") || {}).s),
       monthly: months.map(m => { const f = t => r2(monthly.rows.filter(x => x.branch_id === b.id && x.m === m && x.type === t).reduce((a, x) => a + Number(x.s), 0)); return { m, income: f("income"), expense: f("expense") }; }) };
   });
   const tot = k => r2(out.reduce((a, x) => a + x[k], 0));
-  return { from, to, branches: out, months, totals: { income: tot("income"), expense: tot("expense"), invest: tot("invest"), net: tot("net"), stockValue: tot("stockValue"), employees: out.reduce((a, x) => a + x.employees, 0) } };
+  return { from, to, branches: out, months, totals: { income: tot("income"), expense: tot("expense"), invest: tot("invest"), net: tot("net"), cashNet: tot("cashNet"), stockAdj: tot("stockAdj"), stockValue: tot("stockValue"), employees: out.reduce((a, x) => a + x.employees, 0) } };
 });
 async function activityQuery(q, branchId) {
   const lim = Math.min(5000, Math.max(10, num(q.limit, 1000)));
@@ -802,7 +2495,7 @@ route("GET", "/api/admin/backup", async ctx => {
   needAdmin(ctx);
   const withFiles = ctx.query.files === "1";
   const out = { app: "restaurant-accounting", build: BUILD_ID, exportedAt: new Date().toISOString(), tables: {} };
-  for (const t of ["settings", "admins", "users", "branches", "lists", "records", "doc_counters", "stock_items", "stock_moves", "employees", "payroll_runs", "payroll_items", "transfers", "leaves", "advances", "attendance", "card_plans", "activity", "emp_files", "shop_items", "files"]) {
+  for (const t of ["settings", "admins", "users", "businesses", "branches", "lists", "records", "doc_counters", "stock_items", "stock_moves", "employees", "payroll_runs", "payroll_items", "transfers", "leaves", "advances", "attendance", "card_plans", "activity", "emp_files", "shop_items", "purchase_orders", "pos_config", "pos_menu", "pos_orders", "pos_counters", "files"]) {
     if (t === "emp_files" && !withFiles) { out.tables.emp_files = (await pool.query("SELECT id, branch_id, employee_id, doc_type, filename, mime, size, created_at FROM emp_files")).rows; continue; }
     if (t === "files" && !withFiles) { out.tables.files = (await pool.query("SELECT id, record_id, branch_id, filename, mime, size, created_at FROM files")).rows; continue; }
     out.tables[t] = (await pool.query("SELECT * FROM " + t)).rows;
@@ -895,7 +2588,8 @@ async function renameListIn(bid, kind, oldName, name) {
 async function syncBranchIds(bid) {
   const s = await getSettings();
   if (s.lists_sync_all !== "1") return [bid];
-  return (await pool.query("SELECT id FROM branches ORDER BY sort_order, created_at")).rows.map(r => r.id);
+  // ใช้หมวด/รายการร่วมกันเฉพาะสาขาใน "ธุรกิจเดียวกัน" (v2.9)
+  return (await pool.query("SELECT id FROM branches WHERE business_id=(SELECT business_id FROM branches WHERE id=$1) ORDER BY sort_order, created_at", [bid])).rows.map(r => r.id);
 }
 // ทำคำสั่งเดียวกันกับหลายสาขา โดยจับคู่รายการจาก "ประเภท + ชื่อ" · คืนค่าจำนวนสาขาที่มีการเปลี่ยนแปลง
 async function listOpAll(bids, op, kind, a) {
@@ -1216,7 +2910,7 @@ async function saveRecord(ctx, existing) {
   return recordOut(rows[0]);
 }
 route("POST", B + "/records", async ctx => { await needBranch(ctx); need(ctx, REC_TYPES.includes(ctx.body.type) ? ctx.body.type : "income", "edit"); return { record: await saveRecord(ctx, null) }; });
-const SOURCE_LOCK = { payroll: "เอกสารนี้สร้างจากระบบเงินเดือน — แก้ไข/ยกเลิกได้ที่เมนูเงินเดือน", advance: "เอกสารนี้สร้างจากการอนุมัติเบิกเงินล่วงหน้า — ยกเลิกได้ที่เมนูเบิกเงินล่วงหน้า",
+const SOURCE_LOCK = { pos: "เอกสารนี้สร้าง/อัปเดตอัตโนมัติจากยอดขาย POS — ยกเลิกหรือคืนเงินที่เมนู POS → ออเดอร์ แล้วยอดจะปรับให้เอง", payroll: "เอกสารนี้สร้างจากระบบเงินเดือน — แก้ไข/ยกเลิกได้ที่เมนูเงินเดือน", advance: "เอกสารนี้สร้างจากการอนุมัติเบิกเงินล่วงหน้า — ยกเลิกได้ที่เมนูเบิกเงินล่วงหน้า",
   installment: "เอกสารนี้เป็นงวดผ่อนบัตรเครดิต — ยกเลิกแผนผ่อนได้ที่เมนูบัตรเครดิต", card_fee: "เอกสารนี้สร้างจากการชำระบิลบัตร — ยกเลิกการชำระได้ที่เมนูบัตรเครดิต" };
 async function getRecordFor(ctx, level) {
   const { rows } = await pool.query("SELECT * FROM records WHERE id=$1 AND branch_id=$2", [ctx.params.id, ctx.branch.id]);
@@ -1337,7 +3031,9 @@ route("GET", B + "/summary", async ctx => {
   const emp = await pool.query("SELECT COUNT(*)::int AS c FROM employees WHERE branch_id=$1 AND active=TRUE", [bid]);
   const recent = await pool.query("SELECT * FROM records WHERE branch_id=$1 ORDER BY created_at DESC LIMIT 8", [bid]);
   Object.keys(tot).forEach(k => { tot[k] = r2(tot[k]); });
-  tot.net = r2(tot.income - tot.expense); tot.afterInvest = r2(tot.net - tot.invest);
+  const sa = await stockAdjust(bid, from, to);
+  tot.cashNet = r2(tot.income - tot.expense); tot.stockBegin = sa.begin; tot.stockEnd = sa.end; tot.stockOther = sa.other; tot.stockAdj = sa.adj; tot.stockPending = sa.pending;
+  tot.net = r2(tot.cashNet + sa.adj); tot.afterInvest = r2(tot.net - tot.invest);
   tot.margin = tot.income > 0 ? Math.round(tot.net / tot.income * 1000) / 10 : 0;
   // ช่วงก่อนหน้าความยาวเท่ากัน สำหรับเทียบ %
   const len = days.length; const pTo = new Date(new Date(from + "T00:00:00Z").getTime() - 86400000).toISOString().slice(0, 10);
@@ -1561,6 +3257,7 @@ function stockItemFields(b) {
 }
 route("POST", B + "/stock/items", async ctx => {
   await needBranch(ctx, "stock", "edit");
+  if (!(ctx.perms.full || ctx.perms.approve.stock)) throw new HttpError(403, "เพิ่ม/แก้ไขสินค้าสำหรับผู้จัดการหรือผู้อนุมัติสต็อกเท่านั้น");
   const f = stockItemFields(ctx.body);
   const dup = await pool.query("SELECT 1 FROM stock_items WHERE branch_id=$1 AND lower(name)=lower($2)", [ctx.branch.id, f.name]);
   if (dup.rows.length) throw bad("มีสินค้าชื่อนี้อยู่แล้ว");
@@ -1583,6 +3280,7 @@ route("POST", B + "/stock/items", async ctx => {
 });
 route("PUT", B + "/stock/items/:id", async ctx => {
   await needBranch(ctx, "stock", "edit");
+  if (!(ctx.perms.full || ctx.perms.approve.stock)) throw new HttpError(403, "เพิ่ม/แก้ไขสินค้าสำหรับผู้จัดการหรือผู้อนุมัติสต็อกเท่านั้น");
   const cur = await pool.query("SELECT * FROM stock_items WHERE id=$1 AND branch_id=$2", [ctx.params.id, ctx.branch.id]);
   if (!cur.rows[0]) throw new HttpError(404, "ไม่พบสินค้า");
   if (ctx.body.active !== undefined && Object.keys(ctx.body).length === 1) {
@@ -1601,6 +3299,7 @@ route("PUT", B + "/stock/items/:id", async ctx => {
 });
 route("DELETE", B + "/stock/items/:id", async ctx => {
   await needBranch(ctx, "stock", "edit");
+  if (!(ctx.perms.full || ctx.perms.approve.stock)) throw new HttpError(403, "เพิ่ม/แก้ไขสินค้าสำหรับผู้จัดการหรือผู้อนุมัติสต็อกเท่านั้น");
   const cur = await pool.query("SELECT * FROM stock_items WHERE id=$1 AND branch_id=$2", [ctx.params.id, ctx.branch.id]);
   if (!cur.rows[0]) throw new HttpError(404, "ไม่พบสินค้า");
   const ref = await pool.query("SELECT COUNT(*)::int AS c FROM stock_moves WHERE item_id=$1 AND ref_record_id IS NOT NULL", [ctx.params.id]);
@@ -1621,6 +3320,7 @@ route("GET", B + "/stock/items/:id/photo", async (ctx, req, res) => {
 const MOVE_KINDS = { in: "รับเข้า", out: "เบิกใช้", waste: "ของเสีย / ทิ้ง", count: "ตรวจนับ (ปรับยอด)" };
 // แก้ไข/ลบรายการสต็อกได้ไหม: ผู้อนุมัติ = ทุกรายการ (ยกเว้นที่มาจากเอกสารซื้อ) · พนักงาน = การเบิกของตัวเองภายในวันเดียวกัน หรือรายการของตัวเองที่ยังรออนุมัติ/ไม่อนุมัติ
 function moveEditable(ctx, m) {
+  if (m.xfer_id) return false;
   if (m.ref_record_id) return false;
   if (ctx.perms.approve.stock) return true;
   if (!can(ctx, "stock", "edit") || m.created_by !== ctx.session.actor) return false;
@@ -1632,6 +3332,7 @@ function moveOut(m, ctx) {
     counted: m.counted == null ? null : Number(m.counted), unitCost: Number(m.unit_cost) || 0, amount: Number(m.amount) || 0, balance: Number(m.balance) || 0,
     note: m.note || "", refRecordId: m.ref_record_id || "", docNo: m.doc_no || "", batchId: m.batch_id || "", createdBy: m.created_by || "", createdAt: Number(m.created_at),
     status: m.status || "approved", approvedBy: m.approved_by || "", approvedAt: Number(m.approved_at) || null, rejectReason: m.reject_reason || "", itemQty: m.item_qty == null ? null : Number(m.item_qty),
+    xferDir: m.xfer_dir || "", xferBranch: m.xfer_branch || "",
     inUnit: m.in_unit || "", inQty: m.in_qty == null ? null : Number(m.in_qty), inPrice: m.in_price == null ? null : Number(m.in_price),
     canEdit: ctx ? moveEditable(ctx, m) : false };
 }
@@ -1639,6 +3340,8 @@ route("GET", B + "/stock/moves", async ctx => {
   await needBranch(ctx, "stock", "view");
   const { from, to } = rangeOf(ctx.query);
   const params = [ctx.branch.id, from, to]; let where = "m.branch_id=$1 AND m.move_date BETWEEN $2 AND $3";
+  // พนักงาน (ไม่มีสิทธิ์อนุมัติสต็อก) เห็นเฉพาะรายการของตัวเอง — v2.8
+  if (!(ctx.perms.full || ctx.perms.approve.stock)) { params.push(ctx.session.actor); where += " AND m.created_by=$" + params.length; }
   if (ctx.query.itemId) { params.push(ctx.query.itemId); where += " AND m.item_id=$" + params.length; }
   if (MOVE_KINDS[ctx.query.kind]) { params.push(ctx.query.kind); where += " AND m.kind=$" + params.length; }
   if (["pending", "approved", "rejected"].includes(ctx.query.status)) { params.push(ctx.query.status); where += " AND m.status=$" + params.length; }
@@ -1660,6 +3363,7 @@ route("PUT", B + "/stock/moves/:id", async ctx => {
   const m = (await pool.query("SELECT m.*, i.name, i.qty AS item_qty, i.unit FROM stock_moves m JOIN stock_items i ON i.id=m.item_id WHERE m.id=$1 AND m.branch_id=$2", [ctx.params.id, ctx.branch.id])).rows[0];
   if (!m) throw new HttpError(404, "ไม่พบรายการ");
   if (m.ref_record_id) throw bad("รายการนี้มาจากเอกสารซื้อ — แก้ไขที่เอกสารรายจ่ายแทน");
+  if (m.xfer_id) throw bad("รายการโยกของข้ามสาขาแก้ไขไม่ได้");
   if (!moveEditable(ctx, m)) throw new HttpError(403, "แก้ไขได้เฉพาะการเบิกของตัวเองภายในวันเดียวกัน (รายการอื่นให้ผู้จัดการแก้)");
   const it = (await pool.query("SELECT * FROM stock_items WHERE id=$1", [m.item_id])).rows[0];
   const uf = unitFactor(it, ctx.body.unit !== undefined ? ctx.body.unit : (m.in_unit || ""), true);
@@ -1683,6 +3387,8 @@ async function createStockMoves(ctx, kind, date, note, rawLines, allowNegative) 
   if (!MOVE_KINDS[kind]) throw bad("ประเภทการเคลื่อนไหวไม่ถูกต้อง");
   const lines = (Array.isArray(rawLines) ? rawLines : []).filter(l => l && l.itemId).slice(0, 200);
   if (!lines.length) throw bad("กรุณาเลือกสินค้าอย่างน้อย 1 รายการ");
+  if ((kind === "in" || kind === "count") && !(ctx.perms.full || ctx.perms.approve.stock))
+    throw new HttpError(403, kind === "in" ? "พนักงานรับเข้า/เติมสต็อกไม่ได้ — ใช้ “รายการที่จะซื้อ” ส่งขออนุมัติซื้อแทน" : "การตรวจนับสำหรับผู้จัดการ/ผู้อนุมัติสต็อกเท่านั้น");
   const batch = uid();
   // เบิกใช้ = ตัดยอดทันที ไม่ต้องอนุมัติ · รับเข้า / ของเสีย / ตรวจนับ ของคนที่ไม่มีสิทธิ์อนุมัติ = รออนุมัติ
   const approver = !!ctx.perms.approve.stock || kind === "out";
@@ -1720,6 +3426,63 @@ route("POST", B + "/stock/moves", async ctx => {
   return await createStockMoves(ctx, b.kind, isDate(b.date) ? b.date : todayBkk(), str(b.note, 300), b.lines, !!b.allowNegative);
 });
 // อนุมัติ / ไม่อนุมัติ รายการสต็อก (ทีละหลายรายการได้)
+/* ===== โยกของข้ามสาขา (v2.8) — ต้นทางตัดสต็อกทันที · ปลายทาง "รับเข้า" รออนุมัติ · ปลายทางไม่อนุมัติ = คืนของให้ต้นทางอัตโนมัติ ===== */
+route("GET", B + "/stock/transfer/targets", async ctx => {
+  await needBranch(ctx, "stock", "view");
+  const { rows } = await pool.query("SELECT id, name, code, color FROM branches WHERE id<>$1 AND active=TRUE AND business_id=(SELECT business_id FROM branches WHERE id=$1) ORDER BY sort_order, created_at", [ctx.branch.id]);
+  return { branches: rows.map(b => ({ id: b.id, name: b.name, code: b.code || "", color: b.color || "" })) };
+});
+route("POST", B + "/stock/transfer", async ctx => {
+  await needBranch(ctx, "stock", "edit");
+  if (!(ctx.perms.full || ctx.perms.approve.stock)) throw new HttpError(403, "โยกของข้ามสาขาสำหรับผู้จัดการ/ผู้อนุมัติสต็อก");
+  const b = ctx.body || {};
+  const tb = (await pool.query("SELECT * FROM branches WHERE id=$1", [str(b.to, 100)])).rows[0];
+  if (!tb || tb.id === ctx.branch.id) throw bad("กรุณาเลือกสาขาปลายทาง");
+  if (tb.business_id !== ctx.branch.business_id) throw bad("โยกของได้เฉพาะสาขาในธุรกิจเดียวกัน");
+  const lines = (Array.isArray(b.lines) ? b.lines : []).filter(l => l && l.itemId).slice(0, 200);
+  if (!lines.length) throw bad("กรุณาเลือกสินค้าอย่างน้อย 1 รายการ");
+  const date = isDate(b.date) ? b.date : todayBkk(), note = str(b.note, 300), xid = uid(), prep = [], need = {};
+  for (const l of lines) {
+    const it = (await pool.query("SELECT * FROM stock_items WHERE id=$1 AND branch_id=$2", [l.itemId, ctx.branch.id])).rows[0];
+    if (!it) throw bad("ไม่พบสินค้า");
+    const uf = unitFactor(it, l.unit, true), qIn = num(l.qty, NaN);
+    if (!(qIn > 0)) throw bad("จำนวนต้องมากกว่า 0 (" + it.name + ")");
+    const q = r4(qIn * uf.f); need[it.id] = (need[it.id] || 0) + q;
+    if (need[it.id] > Number(it.qty) + 1e-9) throw bad("\"" + it.name + "\" คงเหลือ " + r4(Number(it.qty)) + " " + (it.unit || "") + " ไม่พอโยก " + r4(need[it.id]));
+    // หาสินค้าชื่อเดียวกันที่สาขาปลายทาง (ไม่มี = สร้างให้ โดยคัดลอกรายละเอียด)
+    let ti = (await pool.query("SELECT * FROM stock_items WHERE branch_id=$1 AND lower(name)=lower($2)", [tb.id, it.name])).rows[0], tf = 1;
+    if (ti) {
+      if ((ti.unit || "") !== (it.unit || "")) {
+        const x = parseUnits(ti.units).find(u => u.n.toLowerCase() === String(it.unit || "").toLowerCase());
+        if (!x) throw bad("\"" + it.name + "\" สาขาปลายทางนับเป็น \"" + (ti.unit || "-") + "\" แต่สาขานี้นับเป็น \"" + (it.unit || "-") + "\" — ตั้งหน่วยให้ตรงกันก่อน");
+        tf = x.f;
+      }
+    }
+    prep.push({ it, ti, tf, uf, qIn: r4(qIn), q });
+  }
+  for (const p of prep) {
+    if (!p.ti) {
+      const nid = uid();
+      await pool.query("INSERT INTO stock_items (id,branch_id,sku,name,category,unit,min_qty,qty,avg_cost,active,note,photo,units,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,0,0,TRUE,$8,$9,$10,$11,$11)",
+        [nid, tb.id, p.it.sku, p.it.name, p.it.category, p.it.unit, p.it.min_qty, p.it.note, p.it.photo || null, p.it.units || null, now()]);
+      p.ti = { id: nid };
+    }
+    const cost = r4(Number(p.it.avg_cost) || 0);
+    await pool.query(`INSERT INTO stock_moves (id,branch_id,item_id,move_date,kind,qty,note,batch_id,created_by,created_at,status,approved_by,approved_at,in_unit,in_qty,xfer_id,xfer_dir,xfer_branch)
+      VALUES ($1,$2,$3,$4,'out',$5,$6,$7,$8,$9,'approved',$8,$9,$10,$11,$12,'out',$13)`,
+      [uid(), ctx.branch.id, p.it.id, date, -p.q, "โยกไป " + tb.name + (note ? " · " + note : ""), xid, ctx.session.actor, now(), p.uf.f !== 1 ? p.uf.unit : null, p.uf.f !== 1 ? p.qIn : null, xid, tb.name]);
+    await pool.query(`INSERT INTO stock_moves (id,branch_id,item_id,move_date,kind,qty,unit_cost,note,batch_id,created_by,created_at,status,in_unit,in_qty,in_price,xfer_id,xfer_dir,xfer_branch)
+      VALUES ($1,$2,$3,$4,'in',$5,$6,$7,$8,$9,$10,'pending',$11,$12,$13,$14,'in',$15)`,
+      [uid(), tb.id, p.ti.id, date, r4(p.q * p.tf), r4(cost / p.tf), "รับโยกจาก " + ctx.branch.name + (note ? " · " + note : ""), xid, ctx.session.actor + " (" + ctx.branch.name + ")", now(),
+        p.uf.f !== 1 ? p.uf.unit : null, p.uf.f !== 1 ? p.qIn : null, p.uf.f !== 1 ? r4(cost * p.uf.f) : null, xid, ctx.branch.name]);
+    await recomputeItem(p.it.id);
+  }
+  const txt = prep.map(p => p.it.name + " " + p.qIn + " " + (p.uf.f !== 1 ? p.uf.unit : (p.it.unit || ""))).slice(0, 6).join(", ");
+  await logActivity(ctx, "stock_xfer_out", "โยกของไป " + tb.name + " " + prep.length + " รายการ: " + txt, ctx.branch.id);
+  await logActivity(ctx, "stock_xfer_in", "รับโยกของจาก " + ctx.branch.name + " (รออนุมัติ) " + prep.length + " รายการ: " + txt, tb.id);
+  return { ok: true, count: prep.length, to: tb.name };
+});
+
 route("POST", B + "/stock/moves/approve", async ctx => {
   await needBranch(ctx); needApprove(ctx, "stock");
   const ids = (Array.isArray(ctx.body.ids) ? ctx.body.ids : []).map(String).slice(0, 500);
@@ -1733,6 +3496,11 @@ route("POST", B + "/stock/moves/approve", async ctx => {
     await pool.query("UPDATE stock_moves SET status=$1, approved_by=$2, approved_at=$3, reject_reason=$4 WHERE id=$5", [ok ? "approved" : "rejected", ctx.session.actor, now(), ok ? null : reason, m.id]);
   }
   for (const id of new Set(rows.map(m => m.item_id))) await recomputeItem(id);
+  // ปลายทางไม่อนุมัติรับโยก → คืนของให้สาขาต้นทาง (ลบรายการโยกออกของต้นทาง)
+  if (!ok) for (const m of rows.filter(x => x.xfer_id && x.xfer_dir === "in")) {
+    const src = (await pool.query("DELETE FROM stock_moves WHERE xfer_id=$1 AND xfer_dir='out' AND item_id IN (SELECT id FROM stock_items WHERE lower(name)=lower($2)) RETURNING item_id, branch_id", [m.xfer_id, m.name])).rows;
+    for (const x of src) { await recomputeItem(x.item_id); await logActivity(ctx, "stock_xfer_return", "สาขา " + ctx.branch.name + " ไม่รับโยก " + m.name + " — คืนสต็อกให้ต้นทาง (" + reason + ")", x.branch_id); }
+  }
   await logActivity(ctx, ok ? "stock_approve" : "stock_reject", (ok ? "อนุมัติ" : "ไม่อนุมัติ") + "รายการสต็อก " + rows.length + " รายการ: " + rows.slice(0, 5).map(m => MOVE_KINDS[m.kind] + " " + m.name + " " + Math.abs(Number(m.kind === "count" ? m.counted : m.qty))).join(", ") + (ok ? "" : " · เหตุผล: " + reason), ctx.branch.id);
   return { ok: true, count: rows.length };
 });
@@ -1741,6 +3509,7 @@ route("DELETE", B + "/stock/moves/:id", async ctx => {
   const { rows } = await pool.query("SELECT m.*, i.name FROM stock_moves m JOIN stock_items i ON i.id=m.item_id WHERE m.id=$1 AND m.branch_id=$2", [ctx.params.id, ctx.branch.id]);
   if (!rows[0]) throw new HttpError(404, "ไม่พบรายการ");
   if (rows[0].ref_record_id) throw bad("รายการนี้มาจากเอกสารซื้อ — แก้ไข/ลบที่เอกสารรายจ่ายแทน");
+  if (rows[0].xfer_id) throw bad("รายการโยกของข้ามสาขาลบไม่ได้ — ถ้าส่งผิด ให้สาขาปลายทางกด “ไม่อนุมัติ” ระบบจะคืนของให้อัตโนมัติ");
   if (!moveEditable(ctx, rows[0])) throw new HttpError(403, rows[0].kind === "out" ? "ลบได้เฉพาะการเบิกของตัวเองภายในวันเดียวกัน (รายการอื่นให้ผู้จัดการลบ)" : "รายการที่อนุมัติแล้ว ลบได้เฉพาะผู้อนุมัติสต็อก");
   await pool.query("DELETE FROM stock_moves WHERE id=$1", [rows[0].id]);
   await recomputeItem(rows[0].item_id);
@@ -1748,11 +3517,89 @@ route("DELETE", B + "/stock/moves/:id", async ctx => {
   return { ok: true };
 });
 
+/* ===== ใบขอซื้อ / ใบสั่งซื้อ (PO) — v2.8 ===== */
+const stockBoss = ctx => !!(ctx.perms.full || ctx.perms.approve.stock);
+function poOut(p) {
+  let lines = []; try { lines = JSON.parse(p.lines_json || "[]"); } catch (e) {}
+  return { id: p.id, poNo: p.po_no, date: p.po_date, status: p.status, note: p.note || "", lines, total: r2(lines.reduce((a, l) => a + (Number(l.qty) || 0) * (Number(l.price) || 0), 0)),
+    createdBy: p.created_by || "", createdAt: Number(p.created_at), approvedBy: p.approved_by || "", approvedAt: Number(p.approved_at) || null, reason: p.reason || "" };
+}
+async function nextPoNo(bid, date) {
+  const ym = date.slice(2, 4) + date.slice(5, 7);
+  const n = Number((await pool.query("SELECT COUNT(*) AS c FROM purchase_orders WHERE branch_id=$1 AND po_no LIKE $2", [bid, "PO" + ym + "-%"])).rows[0].c) || 0;
+  return "PO" + ym + "-" + String(n + 1).padStart(3, "0");
+}
+// พนักงานยืนยันรายการ → ส่งอนุมัติ (ผู้อนุมัติสต็อกสร้าง = อนุมัติทันที)
+route("POST", B + "/shopping/po", async ctx => {
+  await needBranch(ctx, "stock", "edit");
+  const b = ctx.body || {}; const raw = (Array.isArray(b.lines) ? b.lines : []).slice(0, 200);
+  if (!raw.length) throw bad("กรุณาเลือกรายการที่จะซื้ออย่างน้อย 1 รายการ");
+  const date = todayBkk(), boss = stockBoss(ctx), poId = uid(), lines = [], rowIds = [];
+  for (const l of raw) {
+    const q = num(l.qty, NaN); if (!(q > 0)) throw bad("กรุณาใส่จำนวนที่จะซื้อให้ครบทุกรายการ");
+    let row = null, it = null;
+    if (l.id) { row = (await pool.query("SELECT * FROM shop_items WHERE id=$1 AND branch_id=$2", [l.id, ctx.branch.id])).rows[0]; if (!row) throw bad("ไม่พบรายการ"); if (row.status !== "open" || row.po_id) throw bad("\"" + row.name + "\" ถูกส่งขอซื้อไปแล้ว"); }
+    const itemId = row ? row.item_id : str(l.itemId, 100);
+    if (itemId) { it = (await pool.query("SELECT * FROM stock_items WHERE id=$1 AND branch_id=$2", [itemId, ctx.branch.id])).rows[0]; if (!it) throw bad("ไม่พบสินค้า"); }
+    const uf = it ? unitFactor(it, l.unit || (row && row.unit), true) : { f: 1, unit: str(l.unit, 30) || (row ? row.unit : "") };
+    const name = it ? it.name : (row ? row.name : str(l.name, 150)); if (!name) throw bad("ไม่มีชื่อรายการ");
+    if (!row) {
+      if (it) { const dup = (await pool.query("SELECT * FROM shop_items WHERE item_id=$1 AND status='open' AND po_id IS NULL", [it.id])).rows[0]; if (dup) row = dup; }
+      if (!row) { const id = uid(); await pool.query("INSERT INTO shop_items (id,branch_id,item_id,name,category,unit,status,created_by,created_at) VALUES ($1,$2,$3,$4,$5,$6,'open',$7,$8)", [id, ctx.branch.id, it ? it.id : null, name, it ? (it.category || "") : str(l.category, 120), uf.unit, ctx.session.actor, now()]); row = { id }; }
+    }
+    const price = l.price === "" || l.price == null ? (it ? r2(Number(it.avg_cost) * uf.f) : 0) : Math.max(0, num(l.price, 0));
+    await pool.query("UPDATE shop_items SET qty=$1, unit=$2, note=$3, po_id=$4 WHERE id=$5", [r4(q), uf.unit, str(l.note, 300) || null, poId, row.id]);
+    rowIds.push(row.id);
+    lines.push({ shopId: row.id, itemId: it ? it.id : "", name, category: it ? (it.category || "") : (row.category || str(l.category, 120)), qty: r4(q), unit: uf.unit, price: r2(price), note: str(l.note, 300),
+      baseQty: it ? r4(q * uf.f) : null, baseUnit: it ? (it.unit || "") : "", left: it ? r4(Number(it.qty)) : null });
+  }
+  const poNo = await nextPoNo(ctx.branch.id, date);
+  await pool.query("INSERT INTO purchase_orders (id,branch_id,po_no,po_date,status,note,lines_json,created_by,created_at,approved_by,approved_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)",
+    [poId, ctx.branch.id, poNo, date, boss ? "approved" : "pending", str(b.note, 300), JSON.stringify(lines), ctx.session.actor, now(), boss ? ctx.session.actor : null, boss ? now() : null]);
+  await logActivity(ctx, "po_create", (boss ? "สร้างใบสั่งซื้อ " : "ส่งขออนุมัติซื้อ ") + poNo + " · " + lines.length + " รายการ: " + lines.slice(0, 5).map(l => l.name + " " + l.qty + " " + l.unit).join(", "), ctx.branch.id);
+  return { ok: true, id: poId, poNo, pending: !boss };
+});
+route("GET", B + "/shopping/po/:id", async ctx => {
+  await needBranch(ctx, "stock", "view");
+  const p = (await pool.query("SELECT * FROM purchase_orders WHERE id=$1 AND branch_id=$2", [ctx.params.id, ctx.branch.id])).rows[0];
+  if (!p) throw new HttpError(404, "ไม่พบใบสั่งซื้อ");
+  return { po: poOut(p) };
+});
+route("POST", B + "/shopping/po/:id/approve", async ctx => {
+  await needBranch(ctx, "stock", "view"); if (!stockBoss(ctx)) throw new HttpError(403, "ต้องเป็นผู้อนุมัติสต็อก");
+  const p = (await pool.query("SELECT * FROM purchase_orders WHERE id=$1 AND branch_id=$2", [ctx.params.id, ctx.branch.id])).rows[0];
+  if (!p) throw new HttpError(404, "ไม่พบใบสั่งซื้อ"); if (p.status !== "pending") throw bad("ใบนี้ไม่ได้รออนุมัติ");
+  await pool.query("UPDATE purchase_orders SET status='approved', approved_by=$1, approved_at=$2 WHERE id=$3", [ctx.session.actor, now(), p.id]);
+  await logActivity(ctx, "po_approve", "อนุมัติใบสั่งซื้อ " + p.po_no, ctx.branch.id);
+  return { ok: true };
+});
+// ไม่อนุมัติ / ยกเลิก → รายการกลับไปอยู่ในลิสต์ "ต้องซื้อ"
+route("POST", B + "/shopping/po/:id/reject", async ctx => {
+  await needBranch(ctx, "stock", "edit");
+  const p = (await pool.query("SELECT * FROM purchase_orders WHERE id=$1 AND branch_id=$2", [ctx.params.id, ctx.branch.id])).rows[0];
+  if (!p) throw new HttpError(404, "ไม่พบใบสั่งซื้อ");
+  const own = p.created_by === ctx.session.actor && p.status === "pending";
+  if (!stockBoss(ctx) && !own) throw new HttpError(403, "ยกเลิกได้เฉพาะใบที่ตัวเองส่ง (ยังรออนุมัติ) หรือผู้อนุมัติสต็อก");
+  if (!["pending", "approved"].includes(p.status)) throw bad("ใบนี้ปิดไปแล้ว");
+  const bought = Number((await pool.query("SELECT COUNT(*) AS c FROM shop_items WHERE po_id=$1 AND status<>'open'", [p.id])).rows[0].c) || 0;
+  if (bought) throw bad("มีรายการในใบนี้ซื้อแล้ว " + bought + " รายการ — ยกเลิกทั้งใบไม่ได้");
+  const st = own && !stockBoss(ctx) ? "cancelled" : (p.status === "pending" ? "rejected" : "cancelled");
+  await pool.query("UPDATE purchase_orders SET status=$1, reason=$2, approved_by=$3, approved_at=$4 WHERE id=$5", [st, str(ctx.body && ctx.body.reason, 300), ctx.session.actor, now(), p.id]);
+  await pool.query("UPDATE shop_items SET po_id=NULL WHERE po_id=$1 AND status='open'", [p.id]);
+  await logActivity(ctx, "po_" + st, (st === "rejected" ? "ไม่อนุมัติใบสั่งซื้อ " : "ยกเลิกใบสั่งซื้อ ") + p.po_no, ctx.branch.id);
+  return { ok: true, status: st };
+});
+async function closePoIfDone(poId) {
+  if (!poId) return;
+  const left = Number((await pool.query("SELECT COUNT(*) AS c FROM shop_items WHERE po_id=$1 AND status='open'", [poId])).rows[0].c) || 0;
+  await pool.query("UPDATE purchase_orders SET status=CASE WHEN $2 THEN 'done' ELSE 'approved' END WHERE id=$1 AND status IN ('approved','done')", [poId, left === 0]);
+}
+
 /* ================= รายการที่จะซื้อ (Check List) — v2.7 ================= */
 function shopOut(r, ctx) {
   return { id: r.id, itemId: r.item_id || "", name: r.name, category: r.category || "", qty: r.qty == null ? null : Number(r.qty), unit: r.unit || "", note: r.note || "",
     status: r.status, boughtQty: r.bought_qty == null ? null : Number(r.bought_qty), boughtUnit: r.bought_unit || "", boughtPrice: r.bought_price == null ? null : Number(r.bought_price),
-    moveId: r.move_id || "", pending: !!r.pending, moveStatus: r.move_status || "", createdBy: r.created_by || "", createdAt: Number(r.created_at), boughtBy: r.bought_by || "", boughtAt: Number(r.bought_at) || null,
+    moveId: r.move_id || "", pending: !!r.pending, poId: r.po_id || "", moveStatus: r.move_status || "", createdBy: r.created_by || "", createdAt: Number(r.created_at), boughtBy: r.bought_by || "", boughtAt: Number(r.bought_at) || null,
     canUndo: r.status === "bought" && (!!ctx.perms.approve.stock || (r.bought_by === ctx.session.actor && (r.move_status === "pending" || !r.move_id || bkkDateOf(Number(r.bought_at)) === todayBkk()))) };
 }
 route("GET", B + "/shopping", async ctx => {
@@ -1763,7 +3610,8 @@ route("GET", B + "/shopping", async ctx => {
   // ของใกล้หมด (คงเหลือ ≤ จุดสั่งซื้อ) ที่ยังไม่อยู่ในลิสต์ → แสดงเป็นรายการอัตโนมัติ
   const low = (await pool.query(`SELECT id, name, category, unit, units, qty, min_qty, avg_cost FROM stock_items i WHERE branch_id=$1 AND active=TRUE AND min_qty>0 AND qty<=min_qty
     AND NOT EXISTS (SELECT 1 FROM shop_items s WHERE s.item_id=i.id AND s.status='open') ORDER BY category, name`, [ctx.branch.id])).rows;
-  return { items: rows.map(r => shopOut(r, ctx)), suggest: low.map(i => ({ itemId: i.id, name: i.name, category: i.category || "", unit: i.unit || "", qty: Number(i.qty), minQty: Number(i.min_qty), avgCost: Number(i.avg_cost), units: parseUnits(i.units) })),
+  const pos = (await pool.query("SELECT * FROM purchase_orders WHERE branch_id=$1 AND (status IN ('pending','approved') OR created_at>=$2) ORDER BY created_at DESC LIMIT 40", [ctx.branch.id, now() - 7 * 86400000])).rows.map(poOut);
+  return { pos, boss: stockBoss(ctx), items: rows.map(r => shopOut(r, ctx)), suggest: low.map(i => ({ itemId: i.id, name: i.name, category: i.category || "", unit: i.unit || "", qty: Number(i.qty), minQty: Number(i.min_qty), avgCost: Number(i.avg_cost), units: parseUnits(i.units) })),
     canApprove: !!ctx.perms.approve.stock };
 });
 route("POST", B + "/shopping", async ctx => {
@@ -1798,6 +3646,7 @@ route("DELETE", B + "/shopping/:id", async ctx => {
   const r = (await pool.query("SELECT * FROM shop_items WHERE id=$1 AND branch_id=$2", [ctx.params.id, ctx.branch.id])).rows[0];
   if (!r) throw new HttpError(404, "ไม่พบรายการ");
   if (r.status === "bought" && r.move_id) throw bad("รายการนี้รับเข้าสต็อกแล้ว — กด “ยกเลิกซื้อแล้ว” ก่อน");
+  if (r.po_id && r.status === "open") throw bad("รายการนี้อยู่ในใบขอซื้อ — ยกเลิกใบขอซื้อก่อน");
   await pool.query("DELETE FROM shop_items WHERE id=$1", [r.id]);
   await logActivity(ctx, "shop_delete", "ลบรายการที่จะซื้อ: " + r.name, ctx.branch.id);
   return { ok: true };
@@ -1805,6 +3654,7 @@ route("DELETE", B + "/shopping/:id", async ctx => {
 // ติ๊ก "ซื้อแล้ว": ใส่จำนวน + หน่วย + ราคาต่อหน่วย → รับเข้าสต็อก (ผู้ไม่มีสิทธิ์อนุมัติ = รออนุมัติ ตามกติกาเดิม)
 route("POST", B + "/shopping/buy", async ctx => {
   await needBranch(ctx, "stock", "edit");
+  if (!stockBoss(ctx)) throw new HttpError(403, "การรับของเข้า (ติ๊กซื้อแล้ว) สำหรับผู้จัดการ/ผู้อนุมัติสต็อก");
   const b = ctx.body || {};
   let row = null;
   if (b.id) { row = (await pool.query("SELECT * FROM shop_items WHERE id=$1 AND branch_id=$2", [b.id, ctx.branch.id])).rows[0]; if (!row) throw new HttpError(404, "ไม่พบรายการ"); if (row.status !== "open") throw bad("รายการนี้ติ๊กซื้อแล้ว"); }
@@ -1821,10 +3671,12 @@ route("POST", B + "/shopping/buy", async ctx => {
     const r = await createStockMoves(ctx, "in", date, str(b.note, 300) || "ซื้อตามรายการที่จะซื้อ", [{ itemId, qty: qIn, unit, unitCost: price || 0 }]);
     moveId = r.ids[0]; pending = r.pending;
   } else if (!row) throw bad("กรุณาเลือกรายการ");
+  if (row && row.po_id) { const po = (await pool.query("SELECT status FROM purchase_orders WHERE id=$1", [row.po_id])).rows[0]; if (po && po.status === "pending") throw bad("ใบขอซื้อนี้ยังรออนุมัติ — อนุมัติก่อน"); }
   if (row) await pool.query("UPDATE shop_items SET status='bought', bought_qty=$1, bought_unit=$2, bought_price=$3, move_id=$4, pending=$5, bought_by=$6, bought_at=$7 WHERE id=$8",
     [isFinite(qIn) && qIn > 0 ? r4(qIn) : null, unit || row.unit, price != null && isFinite(price) ? r4(price) : null, moveId, pending, ctx.session.actor, now(), row.id]);
   else await pool.query("INSERT INTO shop_items (id,branch_id,item_id,name,category,unit,status,bought_qty,bought_unit,bought_price,move_id,pending,created_by,created_at,bought_by,bought_at) VALUES ($1,$2,$3,$4,$5,$6,'bought',$7,$8,$9,$10,$11,$12,$13,$12,$13)",
     [uid(), ctx.branch.id, itemId, name, category, unit, r4(qIn), unit, price != null ? r4(price) : null, moveId, pending, ctx.session.actor, now()]);
+  if (row) await closePoIfDone(row.po_id);
   await logActivity(ctx, "shop_buy", "ซื้อแล้ว: " + name + (qIn > 0 ? " " + qIn + " " + unit : "") + (price != null ? " @" + price : "") + (moveId ? (pending ? " → รับเข้าสต็อก (รออนุมัติ)" : " → รับเข้าสต็อกแล้ว") : ""), ctx.branch.id);
   return { ok: true, pending, stocked: !!moveId };
 });
@@ -1836,6 +3688,7 @@ route("POST", B + "/shopping/:id/undo", async ctx => {
   if (!shopOut(r, ctx).canUndo) throw new HttpError(403, "ยกเลิกได้เฉพาะคนที่ติ๊กเอง (วันเดียวกัน หรือยังรออนุมัติ) หรือผู้อนุมัติสต็อก");
   if (r.move_id) { const mv = (await pool.query("DELETE FROM stock_moves WHERE id=$1 RETURNING item_id", [r.move_id])).rows[0]; if (mv) await recomputeItem(mv.item_id); }
   await pool.query("UPDATE shop_items SET status='open', bought_qty=NULL, bought_unit=NULL, bought_price=NULL, move_id=NULL, pending=FALSE, bought_by=NULL, bought_at=NULL WHERE id=$1", [r.id]);
+  await closePoIfDone(r.po_id);
   await logActivity(ctx, "shop_undo", "ยกเลิกซื้อแล้ว: " + r.name + (r.move_id ? " (ลบรายการรับเข้าสต็อก)" : ""), ctx.branch.id);
   return { ok: true };
 });
@@ -2329,7 +4182,7 @@ route("GET", "/api/checkin/:bid", async ctx => {
   if (!b) throw new HttpError(404, "ไม่พบสาขา");
   const s = await getSettings();
   const emps = b.checkin_enabled ? (await pool.query("SELECT id, name, nickname, pin_hash FROM employees WHERE branch_id=$1 AND active=TRUE ORDER BY code, name", [b.id])).rows : [];
-  return { branch: { id: b.id, name: b.name, color: b.color, code: b.code, logo: b.logo || "" }, company: { name: s.company_name, logo: s.company_logo }, enabled: !!b.checkin_enabled,
+  return { branch: { id: b.id, name: b.name, color: b.color, code: b.code, logo: b.logo || "" }, company: (z => ({ name: z.name, logo: z.logo || "" }))(await bizOfBranch(b.id)), enabled: !!b.checkin_enabled,
     radius: Number(b.checkin_radius) || 100, workStart: b.work_start || "09:00", lateGrace: Number(b.late_grace) || 0,
     employees: emps.map(e => ({ id: e.id, name: e.name, nickname: e.nickname || "", hasPin: !!e.pin_hash })) };
 });
@@ -2430,6 +4283,13 @@ async function fsAmounts(bid, from, to) {
       g[k] = g[k] || {}; g[k][c] = (g[k][c] || 0) + share; });
   });
   return { g, vatOut: r2(vatOut), vatIn: r2(vatIn) };
+}
+/* กำไรรวมสต็อก (v2.9): ปรับด้วย "ส่วนเปลี่ยนแปลงสต็อก" ที่อนุมัติแล้วเท่านั้น
+   = สต็อกปลายงวด − สต็อกต้นงวด − ของที่รับเข้าเองโดยไม่ผ่านรายจ่าย (ยอดยกมา/รับโยก) — สูตรเดียวกับต้นทุนขายในงบกำไรขาดทุน */
+async function stockAdjust(bid, from, to) {
+  const begin = await stockValueAt(bid, dayBefore(from)), end = await stockValueAt(bid, to), other = await manualStockIn(bid, from, to);
+  const pending = Number((await pool.query("SELECT COUNT(*)::int AS c FROM stock_moves WHERE branch_id=$1 AND status='pending' AND move_date<=$2", [bid, to])).rows[0].c) || 0;
+  return { begin, end, other, adj: r2(end - begin - other), pending };
 }
 async function manualStockIn(bid, from, to) {
   const r = await pool.query("SELECT COALESCE(SUM(amount),0)::float AS s FROM stock_moves WHERE branch_id=$1 AND status='approved' AND kind='in' AND ref_record_id IS NULL AND move_date BETWEEN $2 AND $3", [bid, from, to]);
