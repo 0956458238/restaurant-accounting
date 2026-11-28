@@ -2677,10 +2677,32 @@ function posCancelModal(o, after) {
   }).catch(() => {});
 }
 /* ---------- เมนู & ตั้งค่า POS (ผู้ดูแล POS) ---------- */
+// อ่าน QR จากรูป: ย่อรูปเป็นขาวดำในเครื่อง แล้วให้เซิร์ฟเวอร์ถอดรหัส (ใช้ได้กับ Safari บน iPhone/iPad)
+async function posLoadImage(file) {
+  if (window.createImageBitmap) { try { return await createImageBitmap(file); } catch (e) {} }
+  return await new Promise((ok, no) => { const u = URL.createObjectURL(file), im = new Image(); im.onload = () => ok(im); im.onerror = () => no(new Error("เปิดรูปนี้ไม่ได้ ลองแคปหน้าจอเป็นรูป PNG/JPG")); im.src = u; });
+}
+function posGray(img, max) {
+  const W0 = img.width || img.naturalWidth, H0 = img.height || img.naturalHeight, k = Math.min(1, max / Math.max(W0, H0));
+  const w = Math.max(1, Math.round(W0 * k)), h = Math.max(1, Math.round(H0 * k)), cv = document.createElement("canvas"); cv.width = w; cv.height = h;
+  const cx = cv.getContext("2d"); cx.fillStyle = "#fff"; cx.fillRect(0, 0, w, h); cx.drawImage(img, 0, 0, w, h);
+  const d = cx.getImageData(0, 0, w, h).data, g = new Uint8Array(w * h);
+  for (let i = 0, j = 0; i < g.length; i++, j += 4) g[i] = (d[j] * 77 + d[j + 1] * 150 + d[j + 2] * 29) >> 8;
+  let bin = ""; for (let i = 0; i < g.length; i += 0x8000) bin += String.fromCharCode.apply(null, g.subarray(i, i + 0x8000));
+  return { w, h, gray: btoa(bin) };
+}
+async function posReadQrImage(file) {
+  const img = await posLoadImage(file); let lastErr = null;
+  if ("BarcodeDetector" in window) { try { const r = await new BarcodeDetector({ formats: ["qr_code"] }).detect(img); if (r.length) return await bapi("POST", "/pos/qr-info", { text: r[0].rawValue }); } catch (e) {} }
+  for (const max of [1200, 700, 1800]) {
+    try { return await bapi("POST", "/pos/qr-decode", posGray(img, max)); } catch (e) { lastErr = e; }
+  }
+  throw lastErr || new Error("อ่าน QR จากรูปนี้ไม่ได้");
+}
 BRANCH_PAGES.posmenu = { title: () => "เมนู & ตั้งค่า POS", nav: "posmenu", state: { tab: "menu" }, async render(c) {
   const st = this.state, self = this; const boot = await posBoot(true), ed = boot.canAdmin, cfg = boot.config;
   const rr = () => self.render(c);
-  c.innerHTML = `<div class="page-head"><div class="grow"><h2>เมนู & ตั้งค่า POS</h2><div class="muted small">ยอดขายจะเข้าเป็น “รายรับ” รายวันแยกตามช่องทางให้อัตโนมัติ</div></div>${ed && st.tab === "menu" ? `<button class="btn primary" data-mnew>${icon("plus")} เพิ่มเมนู</button>` : ""}</div>
+  c.innerHTML = `<div class="page-head"><div class="grow"><h2>เมนู & ตั้งค่า POS</h2><div class="muted small">ยอดขายจะเข้าเป็น “รายรับ” รายวันแยกตามช่องทางให้อัตโนมัติ</div></div>${ed && st.tab === "menu" ? `${S.adminToken ? `<button class="btn" data-mcopy>${icon("copy")} คัดลอกเมนูระหว่างสาขา</button>` : ""}<button class="btn primary" data-mnew>${icon("plus")} เพิ่มเมนู</button>` : ""}</div>
     <div class="tabs"><button data-mt="menu" class="${st.tab === "menu" ? "on" : ""}">เมนู (${boot.menu.length})</button><button data-mt="pay" class="${st.tab === "pay" ? "on" : ""}">รับเงิน & บัญชี</button><button data-mt="display" class="${st.tab === "display" ? "on" : ""}">จอลูกค้า</button><button data-mt="import" class="${st.tab === "import" ? "on" : ""}">นำเข้าจาก POS เดิม</button></div><div data-mb></div>`;
   $$("[data-mt]", c).forEach(b => { b.onclick = () => { st.tab = b.dataset.mt; rr(); }; });
   const body = $("[data-mb]", c);
@@ -2691,9 +2713,11 @@ BRANCH_PAGES.posmenu = { title: () => "เมนู & ตั้งค่า POS"
         <div class="grow" data-medit="${m.id}" style="cursor:pointer"><div class="bold">${esc(m.name)}${m.active ? "" : ` <span class="chip">ปิดอยู่</span>`}${m.soldout ? ` <span class="chip bad">หมด</span>` : ""}</div>
           <div class="small muted">฿${m.types.length ? m.types.map(t => esc(t.name) + " " + fmt(t.price).replace(/\.00$/, "")).join(" · ") : fmt(m.price)}${m.addons.length ? " · Add-on " + m.addons.length : ""}${m.dailyLimit != null ? ` · ขายวันนี้ ${m.soldToday}/${m.dailyLimit}` : m.soldToday ? ` · ขายวันนี้ ${m.soldToday}` : ""}</div></div>
         ${ed ? `<button class="btn sm ${m.soldout ? "primary" : ""}" data-msold="${m.id}">${m.soldout ? "เปิดขาย" : "หมด"}</button><div class="row" style="gap:0"><button class="btn ghost sm icon" data-mup="${m.id}">${icon("up")}</button><button class="btn ghost sm icon" data-mdn="${m.id}">${icon("down")}</button></div>` : ""}</div>`).join("")}</div>`; }).join("")
-      : `<div class="empty-hero">${icon("stock")}<h3 style="margin:8px 0 4px">ยังไม่มีเมนู</h3><div>กด “เพิ่มเมนู” หรือแท็บ “นำเข้าจาก POS เดิม” เพื่อดึงเมนูทั้งหมดมาจากระบบเดิม</div></div>`;
+      : `<div class="empty-hero">${icon("stock")}<h3 style="margin:8px 0 4px">ยังไม่มีเมนู</h3><div>กด “เพิ่มเมนู”${S.adminToken ? ", “คัดลอกเมนูจากสาขาอื่น”" : ""} หรือแท็บ “นำเข้าจาก POS เดิม” เพื่อดึงเมนูทั้งหมดมาจากระบบเดิม</div>${ed && S.adminToken ? `<button class="btn primary" style="margin-top:12px" data-mcopy2>${icon("copy")} คัดลอกเมนูจากสาขาอื่น</button>` : ""}</div>`;
     if (!ed) return;
     $("[data-mnew]", c).onclick = () => posMenuModal(null, boot, rr);
+    const mc = $("[data-mcopy]", c); if (mc) mc.onclick = () => posCopyMenuModal(boot.menu.length ? "from" : "to", rr);
+    const mc2 = $("[data-mcopy2]", c); if (mc2) mc2.onclick = () => posCopyMenuModal("to", rr);
     $$("[data-medit]", c).forEach(b => { b.onclick = () => posMenuModal(boot.menu.find(m => m.id === b.dataset.medit), boot, rr); });
     $$("[data-msold]", c).forEach(b => { b.onclick = () => withBtn(b, async () => { const m = boot.menu.find(x => x.id === b.dataset.msold); await bapi("PUT", "/pos/menu/" + m.id, { soldout: !m.soldout }); rr(); }).catch(() => {}); });
     const move = async (id, d) => { const ids = boot.menu.map(m => m.id), i = ids.indexOf(id), j = i + d; if (j < 0 || j >= ids.length) return; [ids[i], ids[j]] = [ids[j], ids[i]]; await bapi("POST", "/pos/menu-order", { ids }); rr(); };
@@ -2702,10 +2726,12 @@ BRANCH_PAGES.posmenu = { title: () => "เมนู & ตั้งค่า POS"
     const incCats = listNames("income_category");
     body.innerHTML = `<div class="card"><div class="card-h"><h3>บัญชีรับเงิน QR</h3></div><div class="card-b">
       <div class="seg" data-qm style="margin-bottom:12px">${[["none", "ไม่ใช้ QR"], ["promptpay", "พร้อมเพย์ (เบอร์/เลขบัตร)"], ["merchant", "QR ร้านค้า (ถุงเงิน ฯลฯ)"]].map(([k, l]) => `<button data-q="${k}" class="${cfg.qrMode === k ? "on" : ""}">${l}</button>`).join("")}</div>
-      <div data-qp="promptpay" ${cfg.qrMode === "promptpay" ? "" : "hidden"}><label class="field" style="max-width:360px"><span>เลขพร้อมเพย์</span><input class="input" data-ppid value="${esc(cfg.promptpayId)}" inputmode="numeric" placeholder="เบอร์มือถือ หรือ เลขประจำตัว 13 หลัก"></label></div>
+      <div data-qp="promptpay" ${cfg.qrMode === "promptpay" ? "" : "hidden"}><label class="field" style="max-width:360px"><span>เลขพร้อมเพย์</span><input class="input" data-ppid value="${esc(cfg.promptpayId)}" inputmode="numeric" placeholder="เบอร์มือถือ หรือ เลขประจำตัว 13 หลัก"></label>
+        <label class="btn sm">${icon("upload")} อ่านเลขจากรูป QR พร้อมเพย์<input type="file" accept="image/*" data-mqimg2 hidden></label></div>
       <div data-qp="merchant" ${cfg.qrMode === "merchant" ? "" : "hidden"}>${cfg.merchantCode ? `<div class="info-box" style="margin-bottom:10px">ตั้งค่า QR ร้านค้าแล้ว · รหัสร้านค้า <b>${esc(cfg.merchantCode)}</b></div>` : ""}
-        <div class="row wrap"><label class="btn">${icon("upload")} อ่านจากรูป QR ร้านค้า<input type="file" accept="image/*" data-mqimg hidden></label><span class="muted small">หรือใช้แท็บ “นำเข้าจาก POS เดิม” ระบบจะดึง QR ร้านค้ามาให้เอง</span></div>
-        <label class="field" style="margin-top:10px"><span>ข้อมูล QR ร้านค้า (ข้อความ)</span><textarea class="input" rows="2" data-mqtxt placeholder="000201010211...">${""}</textarea><div class="field-hint">ถ้าอ่านจากรูปไม่ได้ในเครื่องนี้ ให้ใช้การนำเข้าจาก POS เดิมแทน</div></label></div>
+        <div class="row wrap"><label class="btn primary">${icon("upload")} เลือกรูป QR ร้านค้า<input type="file" accept="image/*" data-mqimg hidden></label><span class="muted small">แคปหน้าจอ QR จากแอปธนาคาร/ถุงเงิน แล้วเลือกรูปนั้น (ใช้ได้ทั้ง iPhone/iPad)</span></div>
+        <div data-mqinfo></div>
+        <details style="margin-top:10px"><summary class="muted small" style="cursor:pointer">ใส่ข้อความ QR เอง (ไม่จำเป็น)</summary><label class="field" style="margin-top:6px"><span>ข้อมูล QR ร้านค้า (ข้อความ)</span><textarea class="input" rows="2" data-mqtxt placeholder="000201010211...">${""}</textarea></label></details></div>
       <div class="row" style="margin-top:12px"><button class="btn primary" data-qsave>${icon("check")} บันทึกบัญชีรับเงิน</button>${cfg.qrReady ? `<button class="btn" data-qtest>ทดสอบ QR ฿1</button>` : ""}</div></div></div>
       <div class="card"><div class="card-h"><h3>ลงบัญชีอัตโนมัติ</h3></div><div class="card-b"><label class="check"><input type="checkbox" data-auto ${cfg.autoIncome ? "checked" : ""}> สร้าง “รายรับ” จากยอดขายทุกวันให้อัตโนมัติ (1 เอกสารต่อวันต่อช่องทาง · ยกเลิก/คืนเงินแล้วยอดปรับเอง)</label>
         <div class="grid g3" style="margin-top:12px"><label class="field"><span>หมวดรายรับ</span><select class="input" data-icat>${opt("", "อัตโนมัติ (หมวดที่มีคำว่า ขาย/อาหาร)")}${incCats.map(n => opt(n, n, n === cfg.incomeCategory)).join("")}</select></label>
@@ -2716,9 +2742,17 @@ BRANCH_PAGES.posmenu = { title: () => "เมนู & ตั้งค่า POS"
         <button class="btn primary" data-csave>${icon("check")} บันทึก</button></div></div>`;
     let mode = cfg.qrMode;
     $$("[data-q]", body).forEach(b => { b.onclick = () => { mode = b.dataset.q; $$("[data-q]", body).forEach(x => x.classList.toggle("on", x === b)); $$("[data-qp]", body).forEach(p => { p.hidden = p.dataset.qp !== mode; }); }; });
-    $("[data-mqimg]", body).onchange = async e => { const f = e.target.files[0]; e.target.value = ""; if (!f) return;
-      if (!("BarcodeDetector" in window)) return toast("เครื่อง/เบราว์เซอร์นี้อ่าน QR จากรูปไม่ได้ — ใช้ Chrome บนคอม/Android หรือใช้การนำเข้าจาก POS เดิม", "bad");
-      try { const bmp = await createImageBitmap(f); const r = await new BarcodeDetector({ formats: ["qr_code"] }).detect(bmp); if (!r.length) throw new Error("อ่าน QR จากรูปนี้ไม่ได้ ลองรูปที่ชัดกว่านี้"); $("[data-mqtxt]", body).value = r[0].rawValue; toast("อ่าน QR แล้ว กดบันทึก"); } catch (er) { toast(er.message, "bad"); } };
+    const setMode = m => { mode = m; $$("[data-q]", body).forEach(x => x.classList.toggle("on", x.dataset.q === m)); $$("[data-qp]", body).forEach(p => { p.hidden = p.dataset.qp !== m; }); };
+    const onQrImg = async e => { const f = e.target.files[0], lbl = e.target.closest("label"); e.target.value = ""; if (!f) return;
+      lbl.classList.add("loading");
+      try { const r = await posReadQrImage(f);
+        if (r.kind === "merchant") { setMode("merchant"); $("[data-mqtxt]", body).value = r.text;
+          $("[data-mqinfo]", body).innerHTML = `<div class="info-box ok" style="margin-top:10px">${icon("check")} อ่าน QR ร้านค้าได้แล้ว${r.name ? ` · <b>${esc(r.name)}</b>` : ""}${r.merchantCode ? ` · รหัสร้านค้า <b>${esc(r.merchantCode)}</b>` : ""}<br><span class="small">กด “บันทึกบัญชีรับเงิน” ด้านล่าง แล้วลอง “ทดสอบ QR ฿1” สแกนด้วยแอปธนาคารเพื่อตรวจชื่อร้าน</span></div>`;
+          toast("อ่าน QR ร้านค้าแล้ว — กดบันทึก"); }
+        else if (r.kind === "promptpay") { setMode("promptpay"); $("[data-ppid]", body).value = r.promptpayId; toast("รูปนี้เป็น QR พร้อมเพย์ส่วนตัว — ใส่เลข " + r.promptpayId + " ให้แล้ว กดบันทึก"); }
+        else toast("อ่านได้ แต่ QR นี้ไม่ใช่ QR รับเงิน (Thai QR) — ลองใช้รูป QR รับเงินจากแอปธนาคาร", "bad");
+      } catch (er) { toast(er.message, "bad"); } finally { lbl.classList.remove("loading"); } };
+    $("[data-mqimg]", body).onchange = onQrImg; $("[data-mqimg2]", body).onchange = onQrImg;
     $("[data-qsave]", body).onclick = e => withBtn(e.currentTarget, async () => { const b2 = { qrMode: mode };
       if (mode === "promptpay") b2.promptpayId = $("[data-ppid]", body).value; if (mode === "merchant" && $("[data-mqtxt]", body).value.trim()) b2.merchantTemplate = $("[data-mqtxt]", body).value.trim();
       await bapi("PUT", "/pos/config", b2); toast("บันทึกบัญชีรับเงินแล้ว"); rr(); }).catch(() => {});
@@ -2759,7 +2793,7 @@ function posMenuModal(m, boot, after) {
     <details style="margin-top:16px"><summary class="bold" style="cursor:pointer">ชื่อภาษาอื่น (ให้พนักงาน/ลูกค้าต่างชาติอ่าน)</summary><div class="grid g3" style="margin-top:8px">
       <label class="field"><span>English</span><input class="input" name="n_en" value="${esc(m.names.en || "")}"></label><label class="field"><span>မြန်မာ</span><input class="input" name="n_my" value="${esc(m.names.my || "")}"></label><label class="field"><span>ລາວ</span><input class="input" name="n_lo" value="${esc(m.names.lo || "")}"></label></div></details>
     <div class="row wrap" style="margin-top:14px"><label class="check"><input type="checkbox" name="active" ${m.active ? "checked" : ""}> เปิดขาย (แสดงในหน้าขาย)</label><label class="check"><input type="checkbox" name="soldout" ${m.soldout ? "checked" : ""}> หมดชั่วคราว</label></div>`,
-    foot: `${isNew ? "" : `<div class="left"><button class="btn danger" data-mdel>${icon("trash")} ลบ</button></div>`}<button class="btn" data-close>ยกเลิก</button><button class="btn primary" data-msave>${icon("check")} บันทึก</button>` });
+    foot: `${isNew ? "" : `<div class="left"><button class="btn danger" data-mdel>${icon("trash")} ลบ</button><button class="btn" data-mdup>${icon("copy")} ทำสำเนา</button></div>`}<button class="btn" data-close>ยกเลิก</button><button class="btn primary" data-msave>${icon("check")} บันทึก</button>` });
   const el = md.el, getImg = bindPhotoBox(el);
   const rows = (arr, sel, ph) => { const w = $(sel, el); w.innerHTML = arr.map((x, i) => `<div class="u-row"><input class="input sm" data-n="${i}" value="${esc(x.name)}" placeholder="${ph}"><span>฿</span><input class="input sm num" data-p="${i}" value="${x.price}" inputmode="decimal"><button type="button" class="btn ghost sm icon" data-r="${i}">${icon("trash")}</button></div>`).join("");
     $$("[data-n]", w).forEach(x => { x.oninput = () => { arr[+x.dataset.n].name = x.value; }; }); $$("[data-p]", w).forEach(x => { x.oninput = () => { arr[+x.dataset.p].price = x.value; }; });
@@ -2773,7 +2807,51 @@ function posMenuModal(m, boot, after) {
     const im = getImg(); if (im !== undefined) b.image = im;
     if (isNew) await bapi("POST", "/pos/menu", b); else await bapi("PUT", "/pos/menu/" + m.id, b);
     md.close(); toast("บันทึกเมนูแล้ว"); after(); }).catch(() => {});
+  const du = $("[data-mdup]", el); if (du) du.onclick = () => withBtn(du, async () => { const r = await bapi("POST", "/pos/menu/" + m.id + "/duplicate"); md.close(); toast("ทำสำเนาแล้ว — แก้ชื่อ/ราคาได้เลย"); await after();
+    const nb = await bapi("GET", "/pos/boot"), nm = nb.menu.find(x => x.id === r.id); if (nm) posMenuModal(nm, nb, after); }).catch(() => {});
   const dl = $("[data-mdel]", el); if (dl) dl.onclick = async () => { if (!await confirmBox("ลบเมนู “" + esc(m.name) + "”? (ออเดอร์เก่ายังอยู่)", { danger: true, okText: "ลบ" })) return; await bapi("DELETE", "/pos/menu/" + m.id); md.close(); toast("ลบแล้ว"); after(); };
+}
+// ผู้ดูแล: คัดลอกเมนูระหว่างสาขา — dir "from" = จากสาขานี้ไปสาขาอื่น, "to" = ดึงจากสาขาอื่นมาสาขานี้
+async function posCopyMenuModal(dir, after) {
+  const [br, cnt] = await Promise.all([api("GET", "/api/admin/branches"), api("GET", "/api/admin/pos/menus")]);
+  const all = br.branches.filter(b => b.active !== false), here = all.find(b => b.id === S.bid) || { id: S.bid, businessId: S.biz };
+  const others = all.filter(b => b.id !== S.bid).sort((a, b) => (a.businessId === here.businessId ? 0 : 1) - (b.businessId === here.businessId ? 0 : 1));
+  const st = { dir, src: dir === "from" ? S.bid : ((others.find(b => cnt.counts[b.id]) || {}).id || ""), to: new Set(dir === "to" ? [S.bid] : []), menu: [], pick: new Set() };
+  const bname = b => esc(b.name) + (b.businessId && b.businessId !== here.businessId ? ` <span class="chip">ธุรกิจอื่น</span>` : "") + (b.posEnabled ? "" : ` <span class="chip">ยังไม่เปิด POS</span>`);
+  const md = openModal({ title: "คัดลอกเมนู POS ระหว่างสาขา", size: "lg", body: `<div class="seg" data-cdir style="margin-bottom:12px"><button data-d="to">ดึงเมนูจากสาขาอื่น มาสาขานี้</button><button data-d="from">ส่งเมนูของสาขานี้ ไปสาขาอื่น</button></div><div data-cb></div>`,
+    foot: `<button class="btn" data-close>ยกเลิก</button><button class="btn primary" data-cgo>${icon("copy")} คัดลอก</button>` });
+  const el = md.el, cb = $("[data-cb]", el);
+  const loadMenu = async () => { st.menu = st.src ? (await api("GET", "/api/admin/pos/menus?branch=" + encodeURIComponent(st.src))).menu : []; st.pick = new Set(st.menu.map(m => m.id)); };
+  const draw = () => {
+    $$("[data-d]", el).forEach(b => b.classList.toggle("on", b.dataset.d === st.dir));
+    const cats = [...new Set(st.menu.map(m => m.category || "อื่นๆ"))];
+    cb.innerHTML = (st.dir === "to"
+      ? `<label class="field"><span>คัดลอกจากสาขา</span><select class="input" data-csrc>${opt("", "— เลือกสาขา —")}${others.map(b => opt(b.id, b.name + " (" + (cnt.counts[b.id] || 0) + " เมนู)", b.id === st.src)).join("")}</select></label>`
+      : `<div class="section-t">ส่งไปสาขา</div><div class="card pm-list">${others.map(b => `<label class="check pm-row" style="margin:0"><input type="checkbox" data-cto="${b.id}" ${st.to.has(b.id) ? "checked" : ""}> <span class="grow">${bname(b)}</span><span class="muted small">${cnt.counts[b.id] || 0} เมนู</span></label>`).join("") || `<div class="muted" style="padding:12px">ยังไม่มีสาขาอื่น</div>`}</div>`)
+      + (st.menu.length ? `<div class="row" style="margin-top:14px"><div class="section-t grow" style="margin:0">เลือกเมนู <span class="muted small">${st.pick.size}/${st.menu.length}</span></div><button class="btn ghost sm" data-call>เลือกทั้งหมด</button><button class="btn ghost sm" data-cnone>ไม่เลือก</button></div>
+        <div style="max-height:44vh;overflow:auto">${cats.map(cn => `<div class="q-gh">${esc(cn)}</div><div class="card pm-list">${st.menu.filter(m => (m.category || "อื่นๆ") === cn).map(m => `<label class="check pm-row" style="margin:0"><input type="checkbox" data-cm="${m.id}" ${st.pick.has(m.id) ? "checked" : ""}> <span class="grow">${esc(m.name)}${m.active ? "" : ` <span class="chip">ปิดอยู่</span>`}</span><span class="muted small">฿${fmt(m.price).replace(/\.00$/, "")}</span></label>`).join("")}</div>`).join("")}</div>`
+        : st.src ? `<div class="muted" style="margin-top:12px">สาขานี้ยังไม่มีเมนู</div>` : "")
+      + `<div class="section-t" style="margin-top:14px">ถ้าสาขาปลายทางมีเมนูชื่อเดียวกันอยู่แล้ว</div>
+        <div class="row wrap"><label class="check"><input type="radio" name="cmode" value="skip" checked> ข้าม (ไม่แตะเมนูเดิม)</label><label class="check"><input type="radio" name="cmode" value="update"> อัปเดตราคา/แบบ/Add-on ให้เหมือนต้นทาง</label></div>
+        <label class="check" style="margin-top:6px"><input type="checkbox" data-cimg checked> คัดลอกรูปเมนูด้วย</label>
+        <div class="info-box" style="margin-top:10px">คัดลอกเฉพาะเมนู (ชื่อ ราคา หมวด แบบ/ขนาด Add-on รูป) — ไม่คัดลอกยอดขาย/ออเดอร์ และไม่แตะบัญชีรับเงิน QR</div>`;
+    const sel = $("[data-csrc]", cb); if (sel) sel.onchange = async () => { st.src = sel.value; await loadMenu(); draw(); };
+    $$("[data-cto]", cb).forEach(x => { x.onchange = () => { x.checked ? st.to.add(x.dataset.cto) : st.to.delete(x.dataset.cto); }; });
+    $$("[data-cm]", cb).forEach(x => { x.onchange = () => { x.checked ? st.pick.add(x.dataset.cm) : st.pick.delete(x.dataset.cm); $(".section-t .muted", cb).textContent = st.pick.size + "/" + st.menu.length; }; });
+    const ca = $("[data-call]", cb); if (ca) ca.onclick = () => { st.pick = new Set(st.menu.map(m => m.id)); draw(); };
+    const cn = $("[data-cnone]", cb); if (cn) cn.onclick = () => { st.pick = new Set(); draw(); };
+  };
+  $$("[data-d]", el).forEach(b => { b.onclick = async () => { if (st.dir === b.dataset.d) return; st.dir = b.dataset.d;
+    if (st.dir === "from") { st.src = S.bid; st.to = new Set(); } else { st.src = (others.find(x => cnt.counts[x.id]) || {}).id || ""; st.to = new Set([S.bid]); }
+    await loadMenu(); draw(); }; });
+  await loadMenu(); draw();
+  const go = $("[data-cgo]", el); go.onclick = () => withBtn(go, async () => {
+    if (!st.src) throw new Error("กรุณาเลือกสาขาต้นทาง"); if (!st.to.size) throw new Error("กรุณาเลือกสาขาปลายทาง"); if (!st.pick.size) throw new Error("กรุณาเลือกเมนูอย่างน้อย 1 รายการ");
+    const r = await api("POST", "/api/admin/pos/copy-menu", { from: st.src, to: [...st.to], ids: [...st.pick], mode: ($("[name=cmode]:checked", el) || {}).value, images: $("[data-cimg]", el).checked });
+    md.close();
+    openModal({ title: "คัดลอกเมนูเรียบร้อย", body: `<table class="tbl"><thead><tr><th>สาขา</th><th class="num">เพิ่มใหม่</th><th class="num">อัปเดต</th><th class="num">ข้าม (ชื่อซ้ำ)</th></tr></thead><tbody>${r.result.map(x => `<tr><td>${esc(x.name)}</td><td class="num">${x.added}</td><td class="num">${x.updated}</td><td class="num">${x.skipped}</td></tr>`).join("")}</tbody></table>
+      ${r.result.some(x => !(all.find(b => b.id === x.branchId) || {}).posEnabled) ? `<div class="muted small" style="margin-top:8px">สาขาที่ยังไม่เปิด POS: เมนูถูกเก็บไว้แล้ว จะเห็นเมื่อเปิดใช้ POS ที่ Admin → จัดการสาขา</div>` : ""}`, foot: `<button class="btn primary" data-close>ตกลง</button>` });
+    after();}).catch(() => {});
 }
 /* ---------- รายงานขาย ---------- */
 BRANCH_PAGES.posreport = { title: () => "รายงานขาย POS", nav: "posreport", async render(c) {

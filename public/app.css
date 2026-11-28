@@ -641,3 +641,8 @@ button.user-chip svg { width: 16px; height: 16px; color: var(--muted); }
 @media (max-width: 520px) { .pos-grid { grid-template-columns: repeat(2, 1fr); gap: 10px; } .pi-name { font-size: 14px; } .pay-methods button { height: 48px; font-size: 13.5px; } .pos-orders { grid-template-columns: 1fr; } }
 .pc-x { display: none; } @media (max-width: 1000px) { .pc-x { display: inline-flex; } }
 [hidden] { display: none !important; }
+
+/* v3.1 */
+.info-box.ok { background: #e8f6ee; color: #17663a; }
+label.btn.loading, .btn.loading { opacity: .55; pointer-events: none; }
+label.btn.loading::after { content: ""; width: 14px; height: 14px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; display: inline-block; animation: spin .7s linear infinite; margin-left: 6px; }
