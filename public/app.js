@@ -78,6 +78,9 @@ const IC = {
   pin: '<path d="M12 22s7-6.2 7-12a7 7 0 1 0-14 0c0 5.8 7 12 7 12z"/><circle cx="12" cy="10" r="2.6"/>',
   userKey: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 10.5-5.1"/><circle cx="17.5" cy="16.5" r="2.5"/><path d="m19.3 18.3 2.2 2.2"/>',
   info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.5"/>',
+  "chevron-down": '<path d="m6 9 6 6 6-6"/>',
+  list: '<path d="M8 6h13M8 12h13M8 18h13"/><path d="M3 6h.01M3 12h.01M3 18h.01"/>',
+  down: '<path d="m6 9 6 6 6-6"/>',
   image: '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.6"/><path d="m21 15-5-5L5 21"/>',
   upload: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m17 8-5-5-5 5"/><path d="M12 3v12"/>',
   external: '<path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>',
@@ -344,7 +347,7 @@ function shell({ kind, nav, active, title, crumb, headRight }) {
   const flag = isBranch && S.adminToken && S.adminBranch === S.bid ? `<div class="admin-flag">${icon("shield", "")}<span>คุณกำลังเปิดบัญชีสาขานี้ในฐานะผู้ดูแลระบบ</span><a href="#/admin/overview" data-backadmin>กลับหน้าผู้ดูแล →</a></div>` : "";
   app.innerHTML = `<div class="shell ${S.navOpen ? "nav-open" : ""}"><div class="scrim" data-scrim></div>
     <aside class="sidebar"><div class="sb-head">${head}</div><nav class="sb-nav">${navHtml}</nav>
-      <div class="sb-foot">${isBranch ? `<a class="nav-item" href="#/" data-leave>${icon("logout")}<span>${S.adminToken && S.adminBranch === S.bid ? "ปิดบัญชีสาขานี้" : "ออกจากสาขา (ล็อก)"}</span></a>` : `<a class="nav-item" href="#/" data-adminout>${icon("lock")}<span>ออกจากระบบผู้ดูแล</span></a>`}</div></aside>
+      <div class="sb-foot">${isBranch ? `<a class="nav-item" href="#/" data-leave>${icon("logout")}<span>${S.adminToken && S.adminBranch === S.bid ? "ปิดบัญชีสาขานี้" : "ออกจากระบบ"}</span></a>` : `<a class="nav-item" href="#/" data-adminout>${icon("lock")}<span>ออกจากระบบผู้ดูแล</span></a>`}</div></aside>
     <div class="main">${flag}<header class="topbar"><button class="btn ghost icon menu-btn" data-menu aria-label="เมนู">${icon("menu")}</button><div class="grow"><h1>${title}</h1>${crumb ? `<div class="crumb">${crumb}</div>` : ""}</div>${headRight || ""}</header>
       <section class="content" id="content"></section></div></div>`;
   $("[data-menu]").onclick = () => { S.navOpen = !S.navOpen; $(".shell").classList.toggle("nav-open", S.navOpen); };
@@ -352,6 +355,7 @@ function shell({ kind, nav, active, title, crumb, headRight }) {
   $$(".nav-item").forEach(a => a.addEventListener("click", () => { S.navOpen = false; }));
   const leave = $("[data-leave]"); if (leave) leave.onclick = e => { e.preventDefault(); leaveBranch(); };
   const ao = $("[data-adminout]"); if (ao) ao.onclick = e => { e.preventDefault(); adminLogout(true); };
+  const am = $("[data-adminme]"); if (am) am.onclick = async () => { if (await confirmBox("ออกจากระบบผู้ดูแล (" + esc(S.admin ? S.admin.username : "") + ")?", { okText: "ออกจากระบบ" })) adminLogout(true); };
   const ba = $("[data-backadmin]"); if (ba) ba.onclick = e => { e.preventDefault(); S.adminBranch = null; go("#/admin/overview"); };
   return $("#content");
 }
@@ -362,19 +366,22 @@ async function renderLanding() {
   try { S.info = await api("GET", "/api/public/info"); } catch (e) { app.innerHTML = `<div class="auth-wrap"><div class="auth-card"><div class="err-box">เชื่อมต่อเซิร์ฟเวอร์ไม่ได้: ${esc(e.message)}</div><button class="btn primary" onclick="location.reload()">ลองใหม่</button></div></div>`; return; }
   const c = S.info.company;
   document.title = c.name + " · ระบบบัญชี";
-  const cards = S.info.branches.map(b => `<button class="branch-card" data-b="${esc(b.id)}">${bdotH(b, `background:${esc(b.color || "#1f6feb")}`)}
-      <div><div class="bname">${esc(b.name)}</div><div class="bmeta">${S.branchTokens[b.id] ? `<span class="chip good">เข้าสู่ระบบอยู่</span>` : icon("lock", "") + " ต้องเข้าสู่ระบบ"}</div></div></button>`).join("");
+  const card = b => `<button class="branch-card" data-b="${esc(b.id)}">${bdotH(b, `background:${esc(b.color || "#1f6feb")}`)}
+      <div><div class="bname">${esc(b.name)}</div><div class="bmeta">${S.branchTokens[b.id] ? `<span class="chip good">เข้าสู่ระบบอยู่</span>` : icon("lock", "") + " ต้องเข้าสู่ระบบ"}</div></div></button>`;
+  const bizs = S.info.businesses || [];
+  const cards = bizs.length > 1 ? "" : S.info.branches.map(card).join("");
+  const grouped = bizs.length > 1 ? bizs.map(z => `<div class="biz-sec"><div class="biz-head">${bizLogo(z, 40)}<div class="bold">${esc(z.name)}</div></div><div class="branch-grid">${S.info.branches.filter(b => b.businessId === z.id).map(card).join("")}</div></div>`).join("") : "";
   app.innerHTML = `<div class="landing"><div class="landing-inner">
     <div class="landing-head"><div class="brand"><div class="brand-logo">${c.logo ? `<img src="${esc(c.logo)}" alt="">` : esc(initials(c.name))}</div><div><div class="bold" style="font-size:16px">${esc(c.name)}</div><div class="muted small">ระบบบัญชีร้านอาหาร</div></div></div>
       <a class="btn" href="#/admin">${icon("shield")} ผู้ดูแลระบบ (Admin)</a></div>
     <h1>เลือกสาขาเพื่อเข้าสู่ระบบบัญชี</h1><p class="lead">แต่ละสาขามีบัญชี สต็อก และเงินเดือนแยกกัน — เข้าด้วยชื่อผู้ใช้ของคุณ หรือรหัสผ่านสาขา (ผู้จัดการ)</p>
-    ${cards ? `<div class="branch-grid">${cards}</div>` : `<div class="empty-hero">${icon("building")}<h3 style="margin:8px 0 4px">ยังไม่มีสาขา</h3><div>เข้าสู่ระบบผู้ดูแล (Admin) เพื่อสร้างสาขาแรกของร้าน</div><div style="margin-top:16px"><a class="btn primary" href="#/admin">${icon("shield")} ไปหน้าผู้ดูแลระบบ</a></div></div>`}
+    ${grouped ? grouped : cards ? `<div class="branch-grid">${cards}</div>` : `<div class="empty-hero">${icon("building")}<h3 style="margin:8px 0 4px">ยังไม่มีสาขา</h3><div>เข้าสู่ระบบผู้ดูแล (Admin) เพื่อสร้างสาขาแรกของร้าน</div><div style="margin-top:16px"><a class="btn primary" href="#/admin">${icon("shield")} ไปหน้าผู้ดูแลระบบ</a></div></div>`}
     <div class="footer-note">ข้อมูลทุกสาขาเข้ารหัสผ่าน · รหัสผ่านถูกเก็บแบบเข้ารหัสทางเดียว (scrypt) · เวอร์ชัน ${esc(S.info.build)}</div></div></div>`;
   $$("[data-b]").forEach(btn => { btn.onclick = () => { const b = S.info.branches.find(x => x.id === btn.dataset.b); if (S.branchTokens[b.id]) go("#/b/" + b.id + "/home"); else branchLogin(b); }; });
 }
 function branchLogin(b) {
   let lastUser = ""; try { lastUser = localStorage.getItem("lastUser") || ""; } catch (e) {}
-  const m = openModal({ title: "เข้าสู่ระบบสาขา", size: "", body: `<div class="row" style="margin-bottom:16px">${bdotH(b, `background:${esc(b.color || "#1f6feb")}`)}<div><div class="bold">${esc(b.name)}</div><div class="muted small">ใส่ชื่อผู้ใช้และรหัสผ่านของคุณ</div></div></div>
+  const m = openModal({ title: "เข้าสู่ระบบสาขา", size: "", body: `<div class="login-brand">${bdotH(b, `background:${esc(b.color || "#1f6feb")}`)}<div><div class="bold">${esc(b.name)}</div><div class="muted small">ใส่ชื่อผู้ใช้และรหัสผ่านของคุณ</div></div></div>
     <div data-err></div><form data-f class="stack"><label class="field"><span>ชื่อผู้ใช้ (User)</span><input class="input" name="username" value="${esc(lastUser)}" autocomplete="username" autocapitalize="off" placeholder="เว้นว่าง = ใช้รหัสสาขา (ผู้จัดการ)"></label>
     <label class="field"><span>รหัสผ่าน</span>${pwInput("password", "••••••")}</label>
     <div class="field-hint">ผู้จัดการสาขา: เว้นชื่อผู้ใช้ว่าง แล้วใส่ <b>รหัสผ่านสาขา</b> (สิทธิ์เต็ม)</div>
@@ -405,6 +412,21 @@ function userForceChange(bid) {
       S._lastPw = null; S.binfo = null; S.bid = null; toast("ตั้งรหัสผ่านใหม่แล้ว"); go("#/b/" + bid + "/home"); }); }
     catch (err) { $("[data-err]", app).innerHTML = `<div class="err-box">${esc(err.message)}</div>`; } };
 }
+/* ===== บัญชีของฉัน: รูปโปรไฟล์ + ออกจากระบบ (v2.8) ===== */
+const meAvatar = (me, b, big) => { const src = me.photo || (me.kind !== "user" && b && b.logo) || "";
+  return src ? `<div class="av ${big ? "big" : ""} img" style="background-image:url('${esc(src)}')"></div>` : `<div class="av ${big ? "big" : ""}" style="${b && b.color ? "background:" + esc(b.color) : ""}">${esc(initials(me.name))}</div>`; };
+function meMenu() {
+  const me = S.binfo.me, b = S.binfo.branch, asAdmin = S.adminToken && S.adminBranch === S.bid;
+  const role = me.kind === "user" ? "ผู้ใช้: " + esc(me.username) : asAdmin ? "ผู้ดูแลระบบ" : "ผู้จัดการ (รหัสสาขา)";
+  const m = openModal({ title: "บัญชีของฉัน", body: `<div class="me-card"><div data-meav>${meAvatar(me, b, true)}</div><div class="me-name">${esc(me.name)}</div><div class="muted">${role}</div><div class="muted small">${esc(b.name)}</div></div>
+    ${me.canPhoto ? `<div style="margin-top:14px">${photoBox(me.photo || "", "รูปโปรไฟล์ของฉัน", true, 400)}</div><button class="btn" data-mesave style="width:100%;margin-top:8px" hidden>${icon("check")} บันทึกรูปโปรไฟล์</button>`
+      : `<div class="muted small" style="text-align:center;margin-top:10px">${asAdmin ? "" : "รูปที่แสดงคือโลโก้สาขา — เปลี่ยนได้ที่ Admin → จัดการสาขา"}</div>`}
+    <button class="btn danger me-out" data-meout>${icon("logout")} ${asAdmin ? "ปิดบัญชีสาขานี้ (กลับหน้าผู้ดูแล)" : "ออกจากระบบ"}</button>`, foot: `<button class="btn" data-close>ปิด</button>` });
+  if (me.canPhoto) { const get = bindPhotoBox(m.el), sv = $("[data-mesave]", m.el);
+    $("[data-phfile]", m.el).addEventListener("change", () => setTimeout(() => { sv.hidden = false; }, 300)); $("[data-phdel]", m.el).addEventListener("click", () => { sv.hidden = false; });
+    sv.onclick = () => withBtn(sv, async () => { const v = get(); if (v === undefined) return; await api("POST", "/api/user/photo", { photo: v }, { token: tokenFor(S.bid) }); me.photo = v; toast("บันทึกรูปโปรไฟล์แล้ว"); m.close(); render(); }).catch(() => {}); }
+  $("[data-meout]", m.el).onclick = () => { m.close(); leaveBranch(); };
+}
 async function leaveBranch() {
   const bid = S.bid;
   if (S.adminToken && S.adminBranch === bid) { S.adminBranch = null; go("#/admin/overview"); return; }
@@ -426,6 +448,8 @@ function branchNav() {
     { sec: "บัญชี" }, { key: "income", label: "รายรับ", icon: "income" }, { key: "expense", label: "รายจ่าย", icon: "expense" },
     { key: "invest", label: "สินทรัพย์ / งบลงทุน", icon: "invest" }, { key: "ledger", label: "สมุดบัญชี / รายงาน", icon: "ledger" },
     { key: "accounts", label: "เงินในบัญชี / ยอดคงเหลือ", icon: "wallet" }, { key: "statements", label: "งบการเงิน (P&L / BS)", icon: "report" },
+    { sec: "POS ขายหน้าร้าน", show: posOn() }, { key: "pos", label: "ขายหน้าร้าน", icon: "cash", show: posOn() && canView("pos") }, { key: "posorders", label: "ออเดอร์ / คิว", icon: "list", show: posOn() && canView("pos") },
+    { key: "posmenu", label: "เมนู & ตั้งค่า POS", icon: "settings", show: posOn() && canView("pos_admin") }, { key: "posreport", label: "รายงานขาย POS", icon: "report", show: posOn() && canView("pos_admin") },
     { sec: "สต็อก" }, { key: "stock", label: "สต็อกสินค้า", icon: "stock", badge: approver("stock") && S.pending && S.pending.stock },
     { sec: "บุคลากร" }, { key: "employees", label: "พนักงาน", icon: "users" }, { key: "payroll", label: "เงินเดือน & สลิป", icon: "payroll" },
     { key: "leave", label: "ขาด-ลา", icon: "calendar", badge: approver("leave") && S.pending && S.pending.leave },
@@ -434,11 +458,13 @@ function branchNav() {
     { sec: "บัตรเครดิต" }, { key: "cards", label: "บัตรเครดิต & ผ่อนชำระ", icon: "wallet", badge: S.pending && S.pending.cards },
     { sec: "ตั้งค่า" }, { key: "settings", label: "หมวด & ช่องทาง", icon: "settings" }, { key: "log", label: "Log การใช้งาน", icon: "history" },
     { key: "password", label: S.binfo && S.binfo.me.kind === "user" ? "เปลี่ยนรหัสผ่านของฉัน" : "เปลี่ยนรหัสผ่านสาขา", icon: "key", show: true }];
-  const vis = all.filter(n => n.sec || (n.show !== undefined ? n.show : canView(n.key))).map(n => n.sec ? n : { ...n, href: b + n.key });
+  const vis = all.filter(n => (n.sec && n.show !== false) || (!n.sec && (n.show !== undefined ? n.show : canView(n.key)))).map(n => n.sec ? n : { ...n, href: b + n.key });
   return vis.filter((n, i) => !n.sec || (vis[i + 1] && !vis[i + 1].sec)); // ซ่อนหัวข้อที่ไม่มีเมนู
 }
 const BRANCH_PAGES = {};
-const pageAllowed = p => p === "password" || (p === "approvals" ? anyApprover() : canView(p));
+const posOn = () => !!(S.binfo && S.binfo.posEnabled);
+const POS_PAGE_PERM = { pos: "pos", posorders: "pos", posmenu: "pos_admin", posreport: "pos_admin" };
+const pageAllowed = p => p === "password" || (p === "approvals" ? anyApprover() : POS_PAGE_PERM[p] ? posOn() && canView(POS_PAGE_PERM[p]) : canView(p));
 async function refreshPending() { try { S.pending = anyApprover() || canView("cards") ? await bapi("GET", "/approvals/count") : null; } catch (e) { S.pending = null; } }
 async function renderBranch(bid, page, rest) {
   if (!tokenFor(bid)) { S.info = S.info || await api("GET", "/api/public/info").catch(() => null); go("#/"); const b = S.info && S.info.branches.find(x => x.id === bid); if (b) setTimeout(() => branchLogin(b), 60); return; }
@@ -457,7 +483,8 @@ async function renderBranch(bid, page, rest) {
   const P = BRANCH_PAGES[page];
   const me = S.binfo.me;
   const c = shell({ kind: "branch", nav: branchNav(), active: P.nav || page, title: P.title(rest), crumb: S.binfo.branch.name,
-    headRight: `<div class="user-chip" title="${esc(me.username)}"><div class="av">${esc(initials(me.name))}</div><span>${esc(me.name)}</span></div>` });
+    headRight: `<button class="user-chip" data-me title="บัญชีของฉัน / ออกจากระบบ">${meAvatar(me, S.binfo.branch)}<span>${esc(me.name)}</span>${icon("chevron-down", "")}</button>` });
+  const meBtn = $("[data-me]"); if (meBtn) meBtn.onclick = () => meMenu();
   try { await P.render(c, rest); } catch (e) { if (e.status !== 401) c.innerHTML = `<div class="err-box">${esc(e.message)}</div>`; }
 }
 async function loadStockItems(force) { if (!S.stockItems || force) S.stockItems = (await bapi("GET", "/stock/items")).items; return S.stockItems; }
@@ -486,7 +513,7 @@ BRANCH_PAGES.dashboard = { title: () => "ภาพรวม", async render(c) {
     <div class="kpis">
       <div class="card kpi"><div class="lbl"><i style="background:var(--income)"></i>รายรับ</div><div class="val">${baht(t.income)}</div><div class="sub">${dl(t.income, p.income, true)}</div></div>
       <div class="card kpi"><div class="lbl"><i style="background:var(--expense)"></i>รายจ่าย</div><div class="val">${baht(t.expense)}</div><div class="sub">${dl(t.expense, p.expense, false)}</div></div>
-      <div class="card kpi"><div class="lbl"><i style="background:${t.net >= 0 ? "var(--good)" : "var(--bad)"}"></i>กำไร (ขาดทุน) สุทธิ</div><div class="val ${t.net < 0 ? "neg" : ""}">${baht(t.net)}</div><div class="sub"><span>อัตรากำไร ${t.margin}%</span>${t.invest ? `<span>· หลังหักงบลงทุน ${baht(t.afterInvest)}</span>` : ""}</div></div>
+      <div class="card kpi click" data-netinfo title="ดูวิธีคิด"><div class="lbl"><i style="background:${t.net >= 0 ? "var(--good)" : "var(--bad)"}"></i>กำไร (ขาดทุน) สุทธิ <span class="muted small">รวมสต็อก ⓘ</span></div><div class="val ${t.net < 0 ? "neg" : ""}">${baht(t.net)}</div><div class="sub"><span>รับ−จ่าย ${baht(t.cashNet)}</span><span>· สต็อก ${t.stockAdj >= 0 ? "+" : ""}${baht(t.stockAdj)}</span><span>· อัตรากำไร ${t.margin}%</span>${t.stockPending ? `<span class="warn-t">· สต็อกรออนุมัติ ${t.stockPending} (ยังไม่นับ)</span>` : ""}</div></div>
       <div class="card kpi"><div class="lbl"><i style="background:var(--invest)"></i>สินทรัพย์ / งบลงทุน</div><div class="val">${baht(t.invest)}</div><div class="sub"><span>มูลค่าสต็อกคงเหลือ ${baht(s.stock.value)}</span></div></div>
     </div>
     ${moneyFlowCard(s)}
@@ -517,6 +544,14 @@ BRANCH_PAGES.dashboard = { title: () => "ภาพรวม", async render(c) {
   const lab = d => s.group === "month" ? TH_M[+d.key.slice(5, 7) - 1] : String(+d.key.slice(8, 10));
   barChart(chartEl, s.series, [{ k: "income", label: "รายรับ", color: "#257de0" }, { k: "expense", label: "รายจ่าย", color: "#f47230" }], lab, d => s.group === "month" ? thMonth(d.key) : thDate(d.key));
   $$("[data-open]", c).forEach(el => { el.onclick = () => openDoc(el.dataset.type, el.dataset.open, () => BRANCH_PAGES.dashboard.render(c)); });
+  const ni = $("[data-netinfo]", c); if (ni) ni.onclick = () => { const t = s.totals; openModal({ title: "กำไรสุทธิ (รวมสต็อก) คิดอย่างไร", body: `<table class="tbl"><tbody>
+    <tr><td>รายรับ</td><td class="num">${fmt(t.income)}</td></tr><tr><td>หัก รายจ่าย</td><td class="num">(${fmt(t.expense)})</td></tr>
+    <tr class="bold"><td>รับ − จ่าย</td><td class="num">${fmt(t.cashNet)}</td></tr>
+    <tr><td>บวก สต็อกปลายงวด (อนุมัติแล้ว)</td><td class="num">${fmt(t.stockEnd)}</td></tr><tr><td>หัก สต็อกต้นงวด</td><td class="num">(${fmt(t.stockBegin)})</td></tr>
+    ${t.stockOther ? `<tr><td>หัก ของที่รับเข้าเองไม่ผ่านรายจ่าย <div class="muted small">ยอดยกมา / รับโยกจากสาขาอื่น — ไม่ใช่กำไร</div></td><td class="num">(${fmt(t.stockOther)})</td></tr>` : ""}
+    <tr class="bold"><td>ปรับสต็อก</td><td class="num">${t.stockAdj >= 0 ? "+" : ""}${fmt(t.stockAdj)}</td></tr>
+    <tr class="bold" style="font-size:16px"><td>กำไร (ขาดทุน) สุทธิ</td><td class="num ${t.net < 0 ? "neg" : "pos"}">${fmt(t.net)}</td></tr></tbody></table>
+    <div class="info-box" style="margin-top:12px">ซื้อวัตถุดิบมาแล้วยังไม่ได้ใช้ ยังไม่ใช่ต้นทุน — ระบบจึงบวกของที่เหลือในสต็อกกลับเข้ากำไร · นับเฉพาะรายการสต็อกที่ <b>อนุมัติแล้ว</b>${t.stockPending ? ` · ตอนนี้มีรายการรออนุมัติ <b>${t.stockPending}</b> รายการ (ยังไม่นับ)` : ""}</div>`, foot: `<button class="btn primary" data-close>เข้าใจแล้ว</button>` }); };
 } };
 
 // เงินเข้า-ออกแต่ละบัญชี: ยอดต้นงวด + รับเข้า − จ่ายออก = คงเหลือ
@@ -618,6 +653,7 @@ function docListPage(type) {
 }
 function statusChip(r) {
   if (r.source === "payroll" && !r.dueDate) return `<span class="chip blue">จากระบบเงินเดือน</span>`;
+  if (r.source === "pos") return `<span class="chip blue">จาก POS</span>`;
   if (r.source === "advance" && !r.dueDate) return `<span class="chip blue">เบิกเงินล่วงหน้า</span>`;
   if (r.planSeq) { const p = `<span class="chip blue plain">ผ่อน ${r.planSeq}/${r.planCount}</span> `; if (r.settledAt) return p + `<span class="chip good">ชำระแล้ว</span>`; return p + (r.dueDate < today() ? `<span class="chip bad">เลยกำหนด ${thDate(r.dueDate, true)}</span>` : `<span class="chip warn">ครบ ${thDate(r.dueDate, true)}</span>`); }
   if (!r.dueDate) return `<span class="chip good">ชำระแล้ว</span>`;
@@ -711,7 +747,7 @@ async function openDoc(type, id, onSaved, prefill) {
   if (isCopy) { const c = prefill.form; Object.assign(d, { party: c.party || "", description: c.description || "", note: c.note || "", paymentChannel: c.paymentChannel || d.paymentChannel, items: (c.items || []).length ? c.items.map(i => ({ name: i.name, category: i.category, qty: i.qty, unit: i.unit || "", price: i.price, stockItemId: i.stockItemId || "" })) : d.items, discountType: c.discountType || "baht", discountValue: c.discountValue || 0, vatMode: c.vatMode || "none" }); }
   if (pf) Object.assign(d, { date: pf.date, party: pf.party || "", description: pf.description || "", note: pf.note || "", paymentChannel: pf.paymentChannel, items: pf.items.length ? pf.items : d.items, discountType: pf.discountType || "baht", discountValue: pf.discountValue || 0, vatMode: pf.vatMode || "none" });
   d.items = d.items.map(i => ({ ...i }));
-  const ro = ["payroll", "advance", "installment", "card_fee"].includes(d.source) || !canEdit(type);
+  const ro = ["payroll", "advance", "installment", "card_fee", "pos"].includes(d.source) || !canEdit(type);
   d.months = pf ? "n" : 1; d.interest = "";
   if (type !== "income") await loadStockItems().catch(() => {});
   const pending = [];
@@ -775,7 +811,7 @@ async function openDoc(type, id, onSaved, prefill) {
       <div class="sum-row muted small"><span>VAT</span><span class="num" data-vat></span></div>
       <div class="sum-row total"><span>ยอดสุทธิ</span><span class="num" data-total style="color:${T.color}"></span></div>
     </div></div>`;
-  const canCopy = id && canEdit(type) && !["payroll", "advance", "installment", "card_fee"].includes(d.source);
+  const canCopy = id && canEdit(type) && !["payroll", "advance", "installment", "card_fee", "pos"].includes(d.source);
   const foot = `<div class="left">${id && !ro ? `<button class="btn danger" data-del>${icon("trash")} ลบ</button>` : ""}${canCopy ? `<button class="btn" data-copydoc title="สร้างเอกสารใหม่จากรายการนี้">${icon("copy")} คัดลอก</button>` : ""}${id ? `<button class="btn" data-print>${icon("print")} พิมพ์</button>` : ""}</div>
     <button class="btn" data-close>${ro ? "ปิด" : "ยกเลิก"}</button>${ro ? "" : `<button class="btn primary" data-save>${icon("check")} บันทึก</button>`}`;
   const planBtns = id && d.source === "installment" && d.planId && canEdit("cards") ? `<button class="btn" data-planedit>${icon("edit")} แก้ไขแผนผ่อน</button><button class="btn danger" data-plancancel>${icon("trash")} ยกเลิกแผนผ่อน</button>` : "";
@@ -1045,9 +1081,9 @@ const unitsHint = i => (i.units || []).length ? (i.units || []).map(u => `1 ${u.
 // ปุ่มรับเข้า/ของเสีย/ตรวจนับ/เพิ่มสินค้า แบบแถวเดียว (เลื่อนแนวนอนได้บนมือถือ)
 function stockActions() {
   if (!canEdit("stock")) return "";
-  return `<div class="stock-actions"><button class="btn sm" data-mv="in">${icon("income")} รับเข้า / เติม</button><button class="btn sm" data-mv="waste">${icon("trash")} ของเสีย</button><button class="btn sm" data-mv="count">${icon("check")} ตรวจนับ</button>${S.adminToken ? `<button class="btn sm" data-copystock>${icon("copy")} คัดลอกไปสาขาอื่น</button>` : ""}<button class="btn sm primary" data-newitem>${icon("plus")} เพิ่มสินค้า</button></div>
-    ${approver("stock") && S.pending && S.pending.stock ? `<div class="info-box row" style="margin-bottom:12px"><span class="grow">มีรายการสต็อกรออนุมัติ <b>${S.pending.stock}</b> รายการ</span><a class="btn sm primary" href="#/b/${S.bid}/approvals">ไปอนุมัติ</a></div>`
-      : !approver("stock") ? `<div class="field-hint" style="margin:-4px 2px 12px">${icon("info", "").replace("<svg", '<svg style="width:13px;height:13px;vertical-align:-2px"')} เบิกใช้ = ตัดสต็อกทันที · รับเข้า/เติม · ของเสีย · ตรวจนับ = รอผู้จัดการอนุมัติ</div>` : ""}`;
+  const boss = approver("stock");
+  return `${boss ? `<div class="stock-actions"><button class="btn sm" data-mv="count">${icon("check")} ตรวจนับ</button>${S.adminToken ? `<button class="btn sm" data-copystock>${icon("copy")} คัดลอกไปสาขาอื่น</button>` : ""}<button class="btn sm primary" data-newitem>${icon("plus")} เพิ่มสินค้า</button></div>` : ""}
+    ${boss && S.pending && S.pending.stock ? `<div class="info-box row" style="margin-bottom:12px"><span class="grow">มีรายการสต็อกรออนุมัติ <b>${S.pending.stock}</b> รายการ</span><a class="btn sm primary" href="#/b/${S.bid}/approvals">ไปอนุมัติ</a></div>` : ""}`;
 }
 function bindStockActions(root, after) {
   const n = $("[data-newitem]", root); if (n) n.onclick = () => stockItemModal(null, after);
@@ -1058,12 +1094,18 @@ const stockCats = items => { const order = listNames("stock_category"); const us
   return [...order.filter(n => used.has(n)), ...[...used].filter(n => !order.includes(n) && n !== NOCAT), ...(used.has(NOCAT) ? [NOCAT] : [])]; };
 const canManageCats = () => canEdit("settings") || (canEdit("stock") && approver("stock"));
 const hm = ms => new Date(ms).toLocaleTimeString("th-TH", { timeZone: "Asia/Bangkok", hour: "2-digit", minute: "2-digit" });
+const QMODE = { out: { th: "เบิกของ", tap: "แตะเพื่อเบิก", btn: "เบิก", ic: "expense", sel: "เลือกเบิก" }, in: { th: "รับเข้า / เติม", tap: "แตะเพื่อรับเข้า", btn: "รับเข้า", ic: "income", sel: "รับเข้า" }, waste: { th: "ของเสีย", tap: "แตะเพื่อแจ้งของเสีย", btn: "บันทึกของเสีย", ic: "trash", sel: "ของเสีย" },
+  xfer: { th: "โยกไปสาขาอื่น", tap: "แตะเพื่อโยก", btn: "โยกของ", ic: "building", sel: "โยก" } };
 async function stockQuick(c, st, self) {
-  const ed = canEdit("stock");
-  st.cart = st.cart || {}; st.cartU = st.cartU || {};
+  const ed = canEdit("stock"), boss = approver("stock");
+  const modes = ed ? (boss ? ["out", "in", "waste", "xfer"] : ["out", "waste"]) : [];
+  if (!modes.includes(st.mode)) st.mode = "out";
+  const mode = st.mode, M = QMODE[mode];
+  st.cm = st.cm || {}; st.cu = st.cu || {}; ["out", "in", "waste", "xfer"].forEach(k => { st.cm[k] = st.cm[k] || {}; st.cu[k] = st.cu[k] || {}; }); st.cp = st.cp || {};
+  const cart = st.cm[mode], cu = st.cu[mode];
   const [items, rec] = await Promise.all([loadStockItems(true), bapi("GET", "/stock/recent")]);
   const act = items.filter(i => i.active);
-  Object.keys(st.cart).forEach(id => { if (!act.find(i => i.id === id)) delete st.cart[id]; });
+  Object.keys(st.cm).forEach(k => Object.keys(st.cm[k]).forEach(id => { if (!act.find(i => i.id === id)) delete st.cm[k][id]; }));
   const body = $("[data-body]", c);
   const todayMv = rec.moves.filter(m => m.date === rec.today), yMv = rec.moves.filter(m => m.date !== rec.today);
   const recRow = m => `<div class="rc-row"><div class="grow"><div class="bold">${esc(m.itemName)}</div><div class="small muted">${esc(m.createdBy)} · ${m.date === rec.today ? "" : "เมื่อวาน "}${hm(m.createdAt)}${m.note ? " · " + esc(m.note) : ""}</div></div>
@@ -1071,108 +1113,220 @@ async function stockQuick(c, st, self) {
   const cats = stockCats(act);
   const count = n => act.filter(i => (i.category || NOCAT) === n).length;
   const lowN = act.filter(i => i.low || i.qty <= 0).length;
-  body.innerHTML = `<div class="recent-card"><div class="rc-head"><div class="rc-ic">${icon("expense")}</div><div class="grow"><b>เบิกล่าสุด</b><div class="small">วันนี้ ${todayMv.length} รายการ</div></div>${yMv.length ? `<button class="btn sm ghost" data-showy>เมื่อวาน (${yMv.length})</button>` : ""}</div>
+  const fu = (it, u) => ufOf(it, u || it.unit);
+  const priceOf = it => st.cp[it.id] !== undefined && st.cp[it.id] !== "" ? num(st.cp[it.id]) : r2(it.avgCost * fu(it, cu[it.id]));
+  const hint = mode === "in" ? `แตะสินค้า → ใส่จำนวน · หน่วย · ราคาต่อหน่วย ได้ในการ์ดเลย เลือกได้หลายอย่าง แล้วกด “รับเข้า” ด้านล่าง`
+    : mode === "waste" ? `แตะสินค้าที่เสีย/ทิ้ง → ใส่จำนวน → กด “บันทึกของเสีย”${boss ? "" : " · <b>รอผู้จัดการอนุมัติก่อนตัดสต็อก</b>"}`
+    : mode === "xfer" ? `แตะสินค้าที่จะส่งไปสาขาอื่น → ใส่จำนวน → กด “โยกของ” แล้วเลือกสาขาปลายทาง · สาขานี้ตัดสต็อกทันที สาขาปลายทางกดอนุมัติเพื่อรับของ (ถ้าไม่อนุมัติ ของจะคืนกลับมาเอง)` : "";
+  body.innerHTML = `${mode === "out" ? `<div class="recent-card"><div class="rc-head"><div class="rc-ic">${icon("expense")}</div><div class="grow"><b>เบิกล่าสุด</b><div class="small">วันนี้ ${todayMv.length} รายการ</div></div>${yMv.length ? `<button class="btn sm ghost" data-showy>เมื่อวาน (${yMv.length})</button>` : ""}</div>
       <div class="rc-list">${todayMv.length ? todayMv.slice(0, st.allRecent ? 40 : 5).map(recRow).join("") : `<div class="small muted" style="padding:8px 2px">วันนี้ยังไม่มีการเบิก</div>`}
       ${todayMv.length > 5 && !st.allRecent ? `<button class="btn sm ghost" data-allrec style="width:100%">ดูทั้งหมดวันนี้ (${todayMv.length})</button>` : ""}
-      <div class="hidden" data-yest>${yMv.length ? `<div class="small muted" style="padding:8px 2px 2px">เมื่อวาน</div>` + yMv.map(recRow).join("") : ""}</div></div></div>
+      <div class="hidden" data-yest>${yMv.length ? `<div class="small muted" style="padding:8px 2px 2px">เมื่อวาน</div>` + yMv.map(recRow).join("") : ""}</div></div></div>` : ""}
+    ${modes.length > 1 ? `<div class="q-modes">${modes.map(k => `<button data-qm="${k}" class="${k === mode ? "on " + k : ""}">${icon(QMODE[k].ic)} ${QMODE[k].th}${Object.keys(st.cm[k]).length ? ` <span class="qm-n">${Object.keys(st.cm[k]).length}</span>` : ""}</button>`).join("")}</div>` : ""}
+    ${hint ? `<div class="info-box q-hint ${mode}">${hint}</div>` : ""}
     ${stockActions()}
     <div class="q-tools"><div class="search grow" style="max-width:none">${icon("search")}<input class="input" placeholder="ค้นหาสินค้า" value="${esc(st.qq || "")}" data-qq></div>${canManageCats() ? `<button class="btn" data-mancat>${icon("settings")} จัดการหมวด</button>` : ""}</div>
     <div class="cat-chips"><button data-qc="" class="${!st.qcat ? "on" : ""}">ทั้งหมด <span>${act.length}</span></button>${cats.map(n => `<button data-qc="${esc(n)}" class="${st.qcat === n ? "on" : ""}">${esc(n)} <span>${count(n)}</span></button>`).join("")}
       ${lowN ? `<button data-qc="__low" class="low ${st.qcat === "__low" ? "on" : ""}">⚠ ใกล้หมด <span>${lowN}</span></button>` : ""}</div>
     <div data-groups></div>
-    ${ed ? `<div class="cart-bar hidden" data-cartbar><div class="grow"><b data-cartn></b><div class="small muted" data-cartlist></div></div><button class="btn" data-cartclear>ล้าง</button><button class="btn primary" data-cartgo>${icon("expense")} เบิก</button></div>` : ""}`;
+    ${ed ? `<div class="cart-bar ${mode} hidden" data-cartbar><div class="grow"><b data-cartn></b><div class="small muted" data-cartlist></div></div><button class="btn" data-cartclear>ล้าง</button><button class="btn primary" data-cartgo>${icon(M.ic)} ${M.btn}</button></div>` : ""}`;
+  const overOf = (it) => mode !== "in" && cart[it.id] * fu(it, cu[it.id]) > it.qty + 1e-9;
+  const lineSum = it => { const f = fu(it, cu[it.id]), q = num(cart[it.id]);
+    if (mode === "in") return `${f !== 1 ? `= ${fmtQ(q * f)} ${esc(it.unit)} · ` : ""}รวม <b>${fmt(q * priceOf(it))}</b>`;
+    return f !== 1 ? `= ${fmtQ(q * f)} ${esc(it.unit)}` : ""; };
   const drawGroups = () => {
     const q = (st.qq || "").toLowerCase();
     const show = act.filter(i => (!q || (i.name + " " + i.sku).toLowerCase().includes(q)) && (!st.qcat || (st.qcat === "__low" ? (i.low || i.qty <= 0) : (i.category || NOCAT) === st.qcat)));
     const groups = stockCats(show).map(n => ({ n, list: show.filter(i => (i.category || NOCAT) === n) }));
-    $("[data-groups]", body).innerHTML = show.length ? groups.map(g => `<div class="q-group"><div class="q-gh">${esc(g.n)} <span>${g.list.length}</span></div><div class="q-grid">${g.list.map(i => { const inC = st.cart[i.id] != null;
+    $("[data-groups]", body).innerHTML = show.length ? groups.map(g => `<div class="q-group"><div class="q-gh">${esc(g.n)} <span>${g.list.length}</span></div><div class="q-grid">${g.list.map(i => { const inC = cart[i.id] != null;
       const cls = i.qty <= 0 ? "out" : i.low ? "low" : "";
-      return `<div class="q-item ${cls} ${inC ? "sel" : ""}" data-qi="${i.id}">${i.photoV ? `<div class="q-head"><span class="q-ph" style="background-image:url('${stockPhoto(i)}')"></span><div class="q-name">${esc(i.name)}</div></div>` : `<div class="q-name">${esc(i.name)}</div>`}<div class="q-left">เหลือ <b>${fmtQ(i.qty)}</b> ${esc(i.unit)}${i.qty <= 0 ? " · หมด" : i.low ? " · ใกล้หมด" : ""}</div>${i.pending ? `<div class="q-pend">รออนุมัติ ${i.pending}</div>` : ""}
-        ${inC ? `<div class="q-step" data-step><button type="button" data-dec>−</button><input inputmode="decimal" value="${st.cart[i.id]}" data-qin><button type="button" data-inc>+</button></div>${(i.units || []).length ? `<div class="q-unit" data-step>${unitSel(i, st.cartU[i.id], "data-qu")}</div>` : ""}` : ed ? `<div class="q-tap">แตะเพื่อเบิก</div>` : ""}</div>`; }).join("")}</div></div>`).join("")
-      : emptyBox(act.length ? "ไม่พบสินค้า" : "ยังไม่มีสินค้า — " + (ed ? "กด “เพิ่มสินค้า” ด้านบน" : "ให้ผู้จัดการเพิ่มสินค้า"), "stock");
+      return `<div class="q-item ${cls} ${inC ? "sel " + mode : ""} ${inC && mode === "in" ? "wide" : ""}" data-qi="${i.id}">${i.photoV ? `<div class="q-head"><span class="q-ph" style="background-image:url('${stockPhoto(i)}')"></span><div class="q-name">${esc(i.name)}</div></div>` : `<div class="q-name">${esc(i.name)}</div>`}<div class="q-left">เหลือ <b>${fmtQ(i.qty)}</b> ${esc(i.unit)}${i.qty <= 0 ? " · หมด" : i.low ? " · ใกล้หมด" : ""}</div>${i.pending ? `<div class="q-pend">รออนุมัติ ${i.pending} รายการ</div>` : ""}
+        ${inC ? `<div class="q-edit" data-step><div class="q-step"><button type="button" data-dec>−</button><input inputmode="decimal" value="${cart[i.id]}" data-qin><button type="button" data-inc>+</button></div>
+          ${(i.units || []).length ? `<div class="q-unit">${unitSel(i, cu[i.id], "data-qu")}</div>` : ""}
+          ${mode === "in" ? `<label class="q-price"><span>ราคา / <i data-pu>${esc(cu[i.id] || i.unit)}</i></span><input inputmode="decimal" data-qp value="${st.cp[i.id] !== undefined ? esc(st.cp[i.id]) : ""}" placeholder="${fmt(r2(i.avgCost * fu(i, cu[i.id])))}"></label>` : ""}
+          <div class="q-sum small" data-qsum>${lineSum(i)}</div><button type="button" class="q-rm" data-qrm>เอาออก</button></div>` : ed ? `<div class="q-tap">${M.tap}</div>` : ""}</div>`; }).join("")}</div></div>`).join("")
+      : emptyBox(act.length ? "ไม่พบสินค้า" : "ยังไม่มีสินค้า — " + (boss ? "กด “เพิ่มสินค้า” ด้านบน" : "ให้ผู้จัดการเพิ่มสินค้า"), "stock");
     if (!ed) return;
     $$("[data-qi]", body).forEach(card => {
       const id = card.dataset.qi, it = act.find(i => i.id === id);
-      card.onclick = e => { if (e.target.closest("[data-step]")) return; if (st.cart[id] != null) delete st.cart[id]; else st.cart[id] = 1; drawGroups(); };
+      card.onclick = e => { if (e.target.closest("[data-step]")) return; if (cart[id] != null) return; cart[id] = 1; drawGroups(); const inp = $(`[data-qi="${id}"] [data-qin]`, body); if (inp && mode === "in") { inp.focus(); inp.select(); } };
       const inp = $("[data-qin]", card); if (!inp) return;
-      const fu = () => ufOf(it, st.cartU[id] || it.unit);
-      const set = v => { v = Math.max(0, Math.round(v * 1000) / 1000); if (!v) { delete st.cart[id]; drawGroups(); return; } st.cart[id] = v; inp.value = v; card.classList.toggle("over", v * fu() > it.qty); drawCart(); };
-      const qu = $("[data-qu]", card); if (qu) { qu.onclick = e => e.stopPropagation(); qu.onchange = () => { st.cartU[id] = qu.value; card.classList.toggle("over", st.cart[id] * fu() > it.qty); drawCart(); }; }
+      const refresh = () => { card.classList.toggle("over", overOf(it)); const s = $("[data-qsum]", card); if (s) s.innerHTML = lineSum(it); drawCart(); };
+      const set = v => { v = Math.max(0, Math.round(v * 1000) / 1000); if (!v) { delete cart[id]; drawGroups(); return; } cart[id] = v; inp.value = v; refresh(); };
+      const qu = $("[data-qu]", card); if (qu) qu.onchange = () => { cu[id] = qu.value; const pu = $("[data-pu]", card); if (pu) pu.textContent = qu.value; const qp = $("[data-qp]", card); if (qp) qp.placeholder = fmt(r2(it.avgCost * fu(it, qu.value))); refresh(); };
+      const qp = $("[data-qp]", card); if (qp) qp.oninput = () => { st.cp[id] = qp.value; refresh(); };
       $("[data-dec]", card).onclick = () => set(num(inp.value) - 1);
       $("[data-inc]", card).onclick = () => set(num(inp.value) + 1);
-      inp.onclick = e => { e.stopPropagation(); inp.select(); };
-      inp.oninput = () => { const v = num(inp.value); if (v > 0) { st.cart[id] = v; card.classList.toggle("over", v * fu() > it.qty); drawCart(); } };
+      $("[data-qrm]", card).onclick = () => { delete cart[id]; delete st.cp[id]; drawGroups(); };
+      inp.onclick = () => inp.select();
+      inp.oninput = () => { const v = num(inp.value); if (v > 0) { cart[id] = v; refresh(); } };
       inp.onblur = () => { if (!(num(inp.value) > 0)) set(0); };
-      card.classList.toggle("over", st.cart[id] * fu() > it.qty);
+      card.classList.toggle("over", overOf(it));
     });
     drawCart();
   };
-  const drawCart = () => { const bar = $("[data-cartbar]", body); if (!bar) return; const ids = Object.keys(st.cart);
-    bar.classList.toggle("hidden", !ids.length); $("[data-cartn]", bar).textContent = "เลือกเบิก " + ids.length + " รายการ";
-    $("[data-cartlist]", bar).textContent = ids.map(id => { const i = act.find(x => x.id === id); return i.name + " " + fmtQ(st.cart[id]) + " " + (st.cartU[id] || i.unit); }).join(" · "); };
+  const totalIn = () => Object.keys(cart).reduce((a, id) => { const i = act.find(x => x.id === id); return a + num(cart[id]) * priceOf(i); }, 0);
+  const drawCart = () => { const bar = $("[data-cartbar]", body); if (!bar) return; const ids = Object.keys(cart);
+    bar.classList.toggle("hidden", !ids.length); $("[data-cartn]", bar).textContent = M.sel + " " + ids.length + " รายการ" + (mode === "in" ? " · รวม " + baht(totalIn()) : "");
+    $("[data-cartlist]", bar).textContent = ids.map(id => { const i = act.find(x => x.id === id); return i.name + " " + fmtQ(cart[id]) + " " + (cu[id] || i.unit); }).join(" · ");
+    $$("[data-qm]", body).forEach(b => { const n = Object.keys(st.cm[b.dataset.qm]).length; let x = $(".qm-n", b); if (n && !x) { b.insertAdjacentHTML("beforeend", ` <span class="qm-n"></span>`); x = $(".qm-n", b); } if (x) { x.textContent = n; x.hidden = !n; } }); };
   drawGroups();
   $("[data-qq]", body).oninput = debounce(e => { st.qq = e.target.value; drawGroups(); }, 150);
   $$("[data-qc]", body).forEach(b => { b.onclick = () => { st.qcat = b.dataset.qc; $$("[data-qc]", body).forEach(x => x.classList.toggle("on", x === b)); drawGroups(); }; });
+  $$("[data-qm]", body).forEach(b => { b.onclick = () => { st.mode = b.dataset.qm; self.render(c); }; });
   const sy = $("[data-showy]", body); if (sy) sy.onclick = () => $("[data-yest]", body).classList.toggle("hidden");
   const ar = $("[data-allrec]", body); if (ar) ar.onclick = () => { st.allRecent = true; self.render(c); };
   $$("[data-editmv]", body).forEach(b => { b.onclick = () => editMoveModal(rec.moves.find(m => m.id === b.dataset.editmv), () => self.render(c)); });
   const mc = $("[data-mancat]", body); if (mc) mc.onclick = () => stockCatManager(items, () => self.render(c));
   bindStockActions(body, () => self.render(c));
   if (!ed) return;
-  $("[data-cartclear]", body).onclick = () => { st.cart = {}; st.cartU = {}; drawGroups(); };
+  $("[data-cartclear]", body).onclick = () => { st.cm[mode] = {}; st.cu[mode] = {}; if (mode === "in") st.cp = {}; self.render(c); };
   $("[data-cartgo]", body).onclick = () => {
-    const ids = Object.keys(st.cart);
-    const m = openModal({ title: "ยืนยันเบิกของ " + ids.length + " รายการ", body: `<div class="q-confirm">${ids.map(id => { const i = act.find(x => x.id === id);
-        return `<div class="rc-row"><div class="grow"><div class="bold">${esc(i.name)}</div><div class="small muted">คงเหลือ ${fmtQ(i.qty)} ${esc(i.unit)}</div></div><input class="input num" style="width:90px" inputmode="decimal" data-cq="${id}" value="${st.cart[id]}">${(i.units || []).length ? unitSel(i, st.cartU[id], `data-cu="${id}" style="width:auto;max-width:130px"`) : `<span class="small" style="width:44px">${esc(i.unit)}</span>`}</div>`; }).join("")}</div>
-      <div class="grid g2" style="margin-top:12px"><label class="field"><span>วันที่เบิก</span><input type="date" class="input" name="date" value="${today()}"></label><label class="field"><span>หมายเหตุ (ไม่บังคับ)</span><input class="input" name="note" placeholder="เช่น ใช้ทำอาหารกะเช้า"></label></div>
-      <div class="info-box" style="margin-top:12px">${icon("check", "").replace("<svg", '<svg style="width:14px;height:14px;vertical-align:-2px"')} การเบิกจะตัดสต็อกทันที ไม่ต้องรออนุมัติ · แก้ไข/ลบการเบิกของตัวเองได้ภายในวันนี้</div>`,
-      foot: `<button class="btn" data-close>กลับไปแก้</button><button class="btn primary" data-ok>${icon("check")} ยืนยันเบิก</button>` });
+    const ids = Object.keys(cart);
+    const rows = ids.map(id => { const i = act.find(x => x.id === id), f = fu(i, cu[id]), u = cu[id] || i.unit, q = num(cart[id]);
+      return `<div class="cf-row"><div class="grow"><div class="bold">${esc(i.name)}</div><div class="small muted">คงเหลือ ${fmtQ(i.qty)} ${esc(i.unit)}${f !== 1 ? ` · ${fmtQ(q)} ${esc(u)} = ${fmtQ(q * f)} ${esc(i.unit)}` : ""}</div></div>
+        <div class="cf-q"><b>${fmtQ(q)}</b> ${esc(u)}${mode === "in" ? `<div class="small muted">@ ${fmt(priceOf(i))} = <b>${fmt(q * priceOf(i))}</b></div>` : ""}</div></div>`; }).join("");
+    const m = openModal({ title: (mode === "out" ? "ยืนยันเบิกของ " : mode === "in" ? "ยืนยันรับเข้า " : mode === "xfer" ? "โยกของไปสาขาอื่น " : "ยืนยันของเสีย ") + ids.length + " รายการ", body: `${mode === "xfer" ? `<label class="field" style="margin-bottom:12px"><span>ไปสาขา <em>*</em></span><select class="input" name="to"><option value="">กำลังโหลด…</option></select></label>` : ""}<div class="q-confirm">${rows}</div>
+      ${mode === "in" ? `<div class="cf-total">รวมมูลค่า <b>${baht(totalIn())}</b></div>` : ""}
+      <div class="grid g2" style="margin-top:12px"><label class="field"><span>วันที่</span><input type="date" class="input" name="date" value="${today()}"></label><label class="field"><span>หมายเหตุ (ไม่บังคับ)</span><input class="input" name="note" placeholder="${mode === "out" ? "เช่น ใช้ทำอาหารกะเช้า" : mode === "in" ? "เช่น ซื้อจากแม็คโคร" : "เช่น เน่าเสีย หมดอายุ"}"></label></div>
+      <div class="info-box" style="margin-top:12px">${mode === "out" ? "การเบิกจะตัดสต็อกทันที ไม่ต้องรออนุมัติ · แก้ไข/ลบการเบิกของตัวเองได้ภายในวันนี้" : mode === "in" ? "รับเข้าสต็อกทันที ต้นทุนเฉลี่ยจะคำนวณใหม่ให้" : mode === "xfer" ? "สาขานี้ตัดสต็อกทันที (ต้นทุนเฉลี่ยตามสาขานี้) · สาขาปลายทางต้องกดอนุมัติจึงจะเข้าสต็อก · ถ้าไม่อนุมัติ ของคืนให้สาขานี้อัตโนมัติ · ถ้าปลายทางยังไม่มีสินค้านี้ ระบบสร้างให้" : boss ? "ตัดสต็อกทันที" : "ส่งให้ผู้จัดการอนุมัติก่อน จึงจะตัดสต็อก"}</div>`,
+      foot: `<button class="btn" data-close>กลับไปแก้</button><button class="btn primary" data-ok>${icon("check")} ยืนยัน${M.btn}</button>` });
+    if (mode === "xfer") bapi("GET", "/stock/transfer/targets").then(t => { const sel = $("[name=to]", m.el); if (!sel) return;
+      sel.innerHTML = `<option value="">— เลือกสาขา —</option>` + t.branches.map(b => opt(b.id, b.name, st.xferTo === b.id)).join(""); sel.onchange = () => { st.xferTo = sel.value; }; }).catch(e => toast(e.message, "bad"));
     const ok = $("[data-ok]", m.el); ok.onclick = () => withBtn(ok, async () => {
-      const lines = $$("[data-cq]", m.el).map(x => { const u = $(`[data-cu="${x.dataset.cq}"]`, m.el); return { itemId: x.dataset.cq, qty: num(x.value), unit: u ? u.value : undefined }; }).filter(l => l.qty > 0);
-      if (!lines.length) throw new Error("ใส่จำนวนที่เบิก");
-      await bapi("POST", "/stock/moves", { kind: "out", date: $("[name=date]", m.el).value, note: $("[name=note]", m.el).value, lines });
-      st.cart = {}; st.cartU = {}; S.stockItems = null; m.close(); toast("เบิกแล้ว " + lines.length + " รายการ · ตัดสต็อกแล้ว"); self.render(c);
+      const lines = ids.map(id => { const i = act.find(x => x.id === id); return { itemId: id, qty: num(cart[id]), unit: cu[id] || i.unit, unitCost: mode === "in" ? priceOf(i) : undefined }; }).filter(l => l.qty > 0);
+      if (!lines.length) throw new Error("ใส่จำนวน");
+      let r;
+      if (mode === "xfer") { const to = $("[name=to]", m.el).value; if (!to) throw new Error("กรุณาเลือกสาขาปลายทาง");
+        r = await bapi("POST", "/stock/transfer", { to, date: $("[name=date]", m.el).value, note: $("[name=note]", m.el).value, lines }); r.pending = false; }
+      else r = await bapi("POST", "/stock/moves", { kind: mode, date: $("[name=date]", m.el).value, note: $("[name=note]", m.el).value, lines });
+      st.cm[mode] = {}; st.cu[mode] = {}; if (mode === "in") st.cp = {}; S.stockItems = null; m.close();
+      toast(r.pending ? "ส่งรออนุมัติแล้ว " + lines.length + " รายการ" : (mode === "out" ? "เบิกแล้ว " : mode === "in" ? "รับเข้าแล้ว " : mode === "xfer" ? "โยกไป " + r.to + " แล้ว " : "บันทึกของเสียแล้ว ") + lines.length + " รายการ"); self.render(c);
     }).catch(() => {});
   };
 }
-/* ===== รายการที่จะซื้อ (Check List) — v2.7 ===== */
+/* ===== รายการที่จะซื้อ + ใบขอซื้อ (PO) — v2.8 ===== */
+const PO_ST = { pending: ["รออนุมัติ", "warn"], approved: ["อนุมัติแล้ว · รอซื้อ", "blue"], done: ["ซื้อครบแล้ว", "good"], rejected: ["ไม่อนุมัติ", "bad"], cancelled: ["ยกเลิก", ""] };
 async function stockShop(c, st, self) {
   const ed = canEdit("stock"), body = $("[data-body]", c);
   const [d, items] = await Promise.all([bapi("GET", "/shopping"), loadStockItems(true)]);
-  const rerender = () => { S.stockItems = null; self.render(c); };
-  const open = d.items.filter(x => x.status === "open"), bought = d.items.filter(x => x.status === "bought");
-  // รวมเป็นแถวเดียวกัน: ของใกล้หมด (อัตโนมัติ) + ที่เพิ่มเอง
-  const rows = open.map(x => ({ ...x, kind: "row" })).concat(d.suggest.map(x => ({ ...x, kind: "auto", id: "auto-" + x.itemId })));
-  const catOf = x => x.category || NOCAT;
-  const order = listNames("stock_category"); const cats = [...new Set(rows.concat(bought).map(catOf))].sort((a, b) => { const ia = order.indexOf(a), ib = order.indexOf(b); return (ia < 0 ? 999 : ia) - (ib < 0 ? 999 : ib) || a.localeCompare(b, "th"); });
+  const boss = d.boss, rerender = () => { S.stockItems = null; self.render(c); };
+  st.sel = st.sel || {}; st.selU = st.selU || {};
   const itemOf = x => x.itemId && items.find(i => i.id === x.itemId);
-  const want = x => { const it = itemOf(x); if (x.kind === "auto") return `<span class="chip warn plain">ใกล้หมด</span> เหลือ ${fmtQ(x.qty)} ${esc(x.unit)} · จุดสั่งซื้อ ${fmtQ(x.minQty)}`;
-    return (x.qty ? `ต้องการ <b>${fmtQ(x.qty)} ${esc(x.unit)}</b>` : "") + (it ? `${x.qty ? " · " : ""}เหลือ ${fmtQ(it.qty)} ${esc(it.unit)}` : (x.qty ? "" : `<span class="muted">ไม่อยู่ในสต็อก</span>`)) + (x.note ? " · " + esc(x.note) : ""); };
-  const rowH = x => `<div class="sh-row" data-sid="${x.id}"><button type="button" class="sh-box" data-buy="${x.id}" ${ed ? "" : "disabled"} aria-label="ติ๊กซื้อแล้ว"></button>
-    <div class="grow" data-buy2="${x.id}"><div class="sh-name">${esc(x.name)}</div><div class="small muted">${want(x)}</div></div>
-    ${ed && x.kind === "row" ? `<button type="button" class="btn ghost sm icon" data-shdel="${x.id}" title="ลบออกจากลิสต์">${icon("trash")}</button>` : ""}</div>`;
-  const boughtH = x => `<div class="sh-row done"><span class="sh-box on">✓</span><div class="grow"><div class="sh-name">${esc(x.name)}</div>
-    <div class="small muted">ซื้อแล้ว${x.boughtQty ? " " + fmtQ(x.boughtQty) + " " + esc(x.boughtUnit) : ""}${x.boughtPrice != null ? " @ " + fmt(x.boughtPrice) + (x.boughtQty ? " = " + fmt(x.boughtQty * x.boughtPrice) : "") : ""} · ${esc(x.boughtBy)} ${hm(x.boughtAt)}
-      ${x.moveId ? (x.moveStatus === "pending" ? ` · <span class="chip warn plain">รับเข้าสต็อก รออนุมัติ</span>` : x.moveStatus === "rejected" ? ` · <span class="chip bad plain">ไม่อนุมัติ</span>` : ` · <span class="chip good plain">เข้าสต็อกแล้ว</span>`) : ""}</div></div>
-    ${x.canUndo ? `<button type="button" class="btn sm" data-undo="${x.id}">ยกเลิก</button>` : ""}</div>`;
-  const total = bought.reduce((a, x) => a + (x.boughtQty && x.boughtPrice != null ? x.boughtQty * x.boughtPrice : 0), 0);
-  body.innerHTML = `<div class="sh-head"><div class="grow"><b>ต้องซื้อ ${rows.length} รายการ</b><div class="small muted">ของที่เหลือต่ำกว่าจุดสั่งซื้อขึ้นมาให้อัตโนมัติ · ติ๊ก ☐ เมื่อซื้อแล้ว → ใส่จำนวนและราคา → รับเข้าสต็อกให้เลย</div></div>
-      ${ed ? `<button class="btn primary" data-shadd>${icon("plus")} เพิ่มรายการ</button>` : ""}</div>
-    ${rows.length || bought.length ? cats.map(cn => { const r = rows.filter(x => catOf(x) === cn), b = bought.filter(x => catOf(x) === cn); if (!r.length && !b.length) return "";
-      return `<div class="sh-group"><div class="q-gh">${esc(cn)} <span>${r.length}${b.length ? " · ซื้อแล้ว " + b.length : ""}</span></div><div class="card sh-card">${r.map(rowH).join("")}${b.map(boughtH).join("")}</div></div>`; }).join("")
-      : emptyBox("ยังไม่มีรายการที่ต้องซื้อ — ตั้ง “จุดสั่งซื้อ” ให้สินค้า แล้วของใกล้หมดจะขึ้นที่นี่เอง หรือกด “เพิ่มรายการ”", "stock")}
-    ${bought.length ? `<div class="row wrap" style="margin-top:12px"><span class="muted small grow">ซื้อแล้ว ${bought.length} รายการ${total ? " · รวม " + baht(total) : ""} (แสดง 3 วันล่าสุด)</span>${ed ? `<button class="btn sm" data-shclear>ล้างรายการที่ซื้อแล้ว</button>` : ""}</div>` : ""}`;
-  const findRow = id => rows.find(x => x.id === id);
-  if (!ed) return;
-  const buy = id => shopBuyModal(findRow(id), itemOf(findRow(id)), rerender);
-  $$("[data-buy]", body).forEach(b => { b.onclick = () => buy(b.dataset.buy); });
-  $$("[data-buy2]", body).forEach(b => { b.onclick = () => buy(b.dataset.buy2); });
-  $$("[data-shdel]", body).forEach(b => { b.onclick = async () => { try { await bapi("DELETE", "/shopping/" + b.dataset.shdel); toast("ลบออกจากลิสต์แล้ว"); rerender(); } catch (e) { toast(e.message, "bad"); } }; });
-  $$("[data-undo]", body).forEach(b => { b.onclick = async () => { const x = bought.find(y => y.id === b.dataset.undo);
-    if (!await confirmBox(`ยกเลิก “ซื้อแล้ว” ของ ${x.name}?${x.moveId ? "\nรายการรับเข้าสต็อกที่สร้างไว้จะถูกลบด้วย" : ""}`, { okText: "ยกเลิกซื้อแล้ว", danger: true })) return;
-    try { await bapi("POST", "/shopping/" + x.id + "/undo"); toast("กลับเป็นรายการที่ต้องซื้อแล้ว"); rerender(); } catch (e) { toast(e.message, "bad"); } }; });
+  const open = d.items.filter(x => x.status === "open" && !x.poId).map(x => ({ ...x, kind: "row" }))
+    .concat(d.suggest.map(x => ({ ...x, kind: "auto", id: "auto-" + x.itemId, left: x.qty, qty: null })));
+  Object.keys(st.sel).forEach(k => { if (!open.some(x => x.id === k)) delete st.sel[k]; });
+  const bought = d.items.filter(x => x.status === "bought");
+  const pos = d.pos, pend = pos.filter(p => p.status === "pending"), appr = pos.filter(p => p.status === "approved"), closed = pos.filter(p => !["pending", "approved"].includes(p.status));
+  const catOf = x => x.category || NOCAT, order = listNames("stock_category");
+  const sortCats = arr => [...new Set(arr.map(catOf))].sort((a, b) => { const ia = order.indexOf(a), ib = order.indexOf(b); return (ia < 0 ? 999 : ia) - (ib < 0 ? 999 : ib) || a.localeCompare(b, "th"); });
+  const defQty = x => { if (x.qty) return x.qty; if (x.kind === "auto") return Math.max(1, Math.ceil(x.minQty * 2 - x.left)); return 1; };
+  const unitOfSel = x => st.selU[x.id] || x.unit || (itemOf(x) || {}).unit || "";
+  const estOf = x => { const it = itemOf(x); return it ? r2(it.avgCost * ufOf(it, unitOfSel(x))) : 0; };
+  const info = x => { const it = itemOf(x);
+    if (x.kind === "auto") return `<span class="chip warn plain">ใกล้หมด</span> เหลือ ${fmtQ(x.left)} ${esc(x.unit)} · จุดสั่งซื้อ ${fmtQ(x.minQty)}`;
+    return (it ? `เหลือ ${fmtQ(it.qty)} ${esc(it.unit)}` : `<span class="muted">ของนอกสต็อก</span>`) + (x.note ? " · " + esc(x.note) : "") + ` · เพิ่มโดย ${esc(x.createdBy)}`; };
+  const rowH = x => { const on = st.sel[x.id] != null, it = itemOf(x);
+    return `<div class="sh-row ${on ? "on" : ""}" data-sr="${x.id}"><button type="button" class="sh-box ${on ? "sel" : ""}" data-pick="${x.id}" ${ed ? "" : "disabled"}>${on ? "✓" : ""}</button>
+      <div class="grow" data-pick2="${x.id}"><div class="sh-name">${esc(x.name)}</div><div class="small muted">${info(x)}</div>
+        ${on ? `<div class="sh-edit" data-noprop><div class="q-step"><button type="button" data-sdec>−</button><input inputmode="decimal" data-sq value="${st.sel[x.id]}"><button type="button" data-sinc>+</button></div>
+          ${it && (it.units || []).length ? unitSel(it, unitOfSel(x), "data-su") : `<span class="u-txt">${esc(unitOfSel(x) || "หน่วย")}</span>`}${estOf(x) ? `<span class="small muted" data-sest>≈ ${fmt(st.sel[x.id] * estOf(x))}</span>` : ""}</div>` : ""}</div>
+      ${ed && x.kind === "row" && !on ? `<button type="button" class="btn ghost sm icon" data-shdel="${x.id}" title="ลบออกจากลิสต์">${icon("trash")}</button>` : ""}
+      ${boss && !on ? `<button type="button" class="btn sm" data-buynow="${x.id}" title="ซื้อมาแล้ว → รับเข้าสต็อก">ซื้อแล้ว</button>` : ""}</div>`; };
+  const poCard = p => { const done = p.lines.filter(l => (d.items.find(x => x.id === l.shopId) || {}).status === "bought").length;
+    return `<div class="po-card" data-po="${p.id}"><div class="po-top"><div class="grow"><b class="doc">${esc(p.poNo)}</b> <span class="chip ${PO_ST[p.status][1]}">${PO_ST[p.status][0]}</span>
+      <div class="small muted">${thDate(p.date, true)} · ${esc(p.createdBy)} · ${p.lines.length} รายการ${p.total ? " · ≈ " + baht(p.total) : ""}${p.status === "approved" && done ? ` · ซื้อแล้ว ${done}/${p.lines.length}` : ""}${p.reason ? ` · <span class="neg">${esc(p.reason)}</span>` : ""}</div>
+      <div class="small po-names">${esc(p.lines.map(l => l.name + " " + fmtQ(l.qty) + " " + l.unit).join(" · "))}</div></div></div>
+      <div class="po-acts"><button class="btn sm" data-poview="${p.id}">${icon("print")} ดู / พิมพ์ PO</button>${p.status === "pending" && boss ? `<button class="btn sm primary" data-poap="${p.id}">${icon("check")} อนุมัติ</button><button class="btn sm" data-porj="${p.id}">ไม่อนุมัติ</button>` : ""}
+        ${p.status === "pending" && !boss && p.createdBy === S.binfo.me.name ? `<button class="btn sm ghost" data-pocancel="${p.id}">ยกเลิกคำขอ</button>` : ""}${p.status === "approved" && boss ? `<button class="btn sm primary" data-poview="${p.id}">ติ๊กของที่ซื้อแล้ว</button>` : ""}</div></div>`; };
+  const cats = sortCats(open);
+  body.innerHTML = `
+    <div class="sh-steps"><div class="${open.length ? "on" : ""}"><b>${open.length}</b><span>ต้องซื้อ</span></div><div class="${pend.length ? "on warn" : ""}"><b>${pend.length}</b><span>รออนุมัติ</span></div><div class="${appr.length ? "on blue" : ""}"><b>${appr.length}</b><span>อนุมัติแล้ว รอซื้อ</span></div></div>
+    ${pend.length || appr.length ? `<div class="section-t">ใบขอซื้อ (PO) ที่ยังเปิดอยู่</div>${pend.concat(appr).map(poCard).join("")}` : ""}
+    <div class="sh-head"><div class="grow"><div class="section-t" style="margin:6px 0 2px">${boss ? "ของที่ต้องซื้อ" : "1. ติ๊กของที่ต้องซื้อ · 2. ใส่จำนวน · 3. ส่งขออนุมัติ"}</div><div class="small muted">ของใกล้หมด (ต่ำกว่าจุดสั่งซื้อ) ขึ้นมาให้เอง${ed ? " · เพิ่มของอื่นได้ที่ปุ่มขวา" : ""}</div></div>
+      ${ed ? `<button class="btn" data-shadd>${icon("plus")} เพิ่มรายการ</button>` : ""}</div>
+    ${open.length ? `${ed ? `<div class="row" style="margin-bottom:8px"><button class="btn sm ghost" data-selall>เลือกทั้งหมด (${open.length})</button>${Object.keys(st.sel).length ? `<button class="btn sm ghost" data-selnone>ล้างที่เลือก</button>` : ""}</div>` : ""}
+      ${cats.map(cn => `<div class="sh-group"><div class="q-gh">${esc(cn)} <span>${open.filter(x => catOf(x) === cn).length}</span></div><div class="card sh-card">${open.filter(x => catOf(x) === cn).map(rowH).join("")}</div></div>`).join("")}`
+      : emptyBox("ไม่มีของที่ต้องซื้อตอนนี้ 👍 — ตั้ง “จุดสั่งซื้อ” ให้สินค้า แล้วของใกล้หมดจะขึ้นที่นี่เอง", "stock")}
+    ${bought.length ? `<details class="sh-done"><summary>ซื้อแล้ว 3 วันล่าสุด (${bought.length})</summary><div class="card sh-card">${bought.map(x => `<div class="sh-row done"><span class="sh-box on">✓</span><div class="grow"><div class="sh-name">${esc(x.name)}</div>
+      <div class="small muted">${x.boughtQty ? fmtQ(x.boughtQty) + " " + esc(x.boughtUnit) : ""}${x.boughtPrice != null ? " @ " + fmt(x.boughtPrice) : ""} · ${esc(x.boughtBy)} ${hm(x.boughtAt)}${x.moveId ? (x.moveStatus === "pending" ? " · รออนุมัติรับเข้า" : " · เข้าสต็อกแล้ว") : ""}</div></div>${x.canUndo ? `<button class="btn sm" data-undo="${x.id}">ยกเลิก</button>` : ""}</div>`).join("")}</div>
+      ${boss ? `<button class="btn sm" data-shclear style="margin-top:8px">ล้างรายการที่ซื้อแล้ว</button>` : ""}</details>` : ""}
+    ${closed.length ? `<details class="sh-done"><summary>ใบขอซื้อที่ปิดแล้ว (${closed.length})</summary>${closed.map(poCard).join("")}</details>` : ""}
+    ${ed ? `<div class="cart-bar po hidden" data-pobar><div class="grow"><b data-pon></b><div class="small muted" data-pol></div></div><button class="btn" data-poclr>ล้าง</button><button class="btn primary" data-pogo>${icon("check")} ${boss ? "สร้างใบสั่งซื้อ" : "ส่งขออนุมัติ"}</button></div>` : ""}`;
+  const findO = id => open.find(x => x.id === id);
+  const drawBar = () => { const bar = $("[data-pobar]", body); if (!bar) return; const ids = Object.keys(st.sel);
+    bar.classList.toggle("hidden", !ids.length); const tot = ids.reduce((a, id) => a + num(st.sel[id]) * estOf(findO(id)), 0);
+    $("[data-pon]", bar).textContent = "เลือก " + ids.length + " รายการ" + (tot ? " · ≈ " + baht(tot) : "");
+    $("[data-pol]", bar).textContent = ids.map(id => { const x = findO(id); return x.name + " " + fmtQ(st.sel[id]) + " " + unitOfSel(x); }).join(" · "); };
+  drawBar();
+  $$("[data-poview]", body).forEach(b => { b.onclick = () => poModal(pos.find(p => p.id === b.dataset.poview), d, items, boss, rerender); });
+  $$("[data-poap]", body).forEach(b => { b.onclick = () => withBtn(b, async () => { await bapi("POST", "/shopping/po/" + b.dataset.poap + "/approve"); toast("อนุมัติใบขอซื้อแล้ว"); rerender(); }).catch(() => {}); });
+  $$("[data-porj]", body).forEach(b => { b.onclick = () => { const x = openModal({ title: "ไม่อนุมัติใบขอซื้อ", body: `<label class="field"><span>เหตุผล (ไม่บังคับ)</span><input class="input" name="reason" placeholder="เช่น ของยังพอใช้"></label><div class="field-hint" style="margin-top:6px">รายการจะกลับไปอยู่ในลิสต์ “ต้องซื้อ”</div>`, foot: `<button class="btn" data-close>ยกเลิก</button><button class="btn danger" data-ok>ไม่อนุมัติ</button>` });
+    const ok = $("[data-ok]", x.el); ok.onclick = () => withBtn(ok, async () => { await bapi("POST", "/shopping/po/" + b.dataset.porj + "/reject", { reason: $("[name=reason]", x.el).value }); x.close(); toast("ไม่อนุมัติแล้ว"); rerender(); }).catch(() => {}); }; });
+  $$("[data-pocancel]", body).forEach(b => { b.onclick = async () => { if (!await confirmBox("ยกเลิกคำขอซื้อนี้? รายการจะกลับไปอยู่ในลิสต์", { okText: "ยกเลิกคำขอ", danger: true })) return; try { await bapi("POST", "/shopping/po/" + b.dataset.pocancel + "/reject"); toast("ยกเลิกแล้ว"); rerender(); } catch (e) { toast(e.message, "bad"); } }; });
+  $$("[data-undo]", body).forEach(b => { b.onclick = async () => { if (!await confirmBox("ยกเลิก “ซื้อแล้ว”? รายการรับเข้าสต็อกที่สร้างไว้จะถูกลบด้วย", { okText: "ยกเลิกซื้อแล้ว", danger: true })) return;
+    try { await bapi("POST", "/shopping/" + b.dataset.undo + "/undo"); toast("ยกเลิกแล้ว"); rerender(); } catch (e) { toast(e.message, "bad"); } }; });
   const clr = $("[data-shclear]", body); if (clr) clr.onclick = async () => { await bapi("POST", "/shopping/clear"); toast("ล้างแล้ว"); rerender(); };
-  $("[data-shadd]", body).onclick = () => shopAddModal(items, rows, rerender);
+  if (!ed) return;
+  const redraw = () => stockShop(c, st, self);
+  const toggle = id => { if (st.sel[id] != null) delete st.sel[id]; else st.sel[id] = defQty(findO(id)); redraw(); };
+  $$("[data-pick]", body).forEach(b => { b.onclick = () => toggle(b.dataset.pick); });
+  $$("[data-pick2]", body).forEach(b => { b.onclick = e => { if (e.target.closest("[data-noprop]")) return; toggle(b.dataset.pick2); }; });
+  $$(".sh-row.on", body).forEach(r => { const id = r.dataset.sr, x = findO(id), inp = $("[data-sq]", r);
+    const upd = () => { const e = $("[data-sest]", r); if (e) e.textContent = "≈ " + fmt(num(st.sel[id]) * estOf(x)); drawBar(); };
+    const set = v => { v = Math.max(0, Math.round(v * 1000) / 1000); if (!v) { delete st.sel[id]; redraw(); return; } st.sel[id] = v; inp.value = v; upd(); };
+    $("[data-sdec]", r).onclick = () => set(num(inp.value) - 1); $("[data-sinc]", r).onclick = () => set(num(inp.value) + 1);
+    inp.oninput = () => { const v = num(inp.value); if (v > 0) { st.sel[id] = v; upd(); } }; inp.onblur = () => { if (!(num(inp.value) > 0)) set(0); };
+    const su = $("[data-su]", r); if (su) su.onchange = () => { st.selU[id] = su.value; upd(); }; });
+  const sa = $("[data-selall]", body); if (sa) sa.onclick = () => { open.forEach(x => { if (st.sel[x.id] == null) st.sel[x.id] = defQty(x); }); redraw(); };
+  const sn = $("[data-selnone]", body); if (sn) sn.onclick = () => { st.sel = {}; redraw(); };
+  $$("[data-shdel]", body).forEach(b => { b.onclick = async () => { try { await bapi("DELETE", "/shopping/" + b.dataset.shdel); toast("ลบออกจากลิสต์แล้ว"); rerender(); } catch (e) { toast(e.message, "bad"); } }; });
+  $$("[data-buynow]", body).forEach(b => { b.onclick = () => { const x = findO(b.dataset.buynow); shopBuyModal(x, itemOf(x), rerender); }; });
+  $("[data-shadd]", body).onclick = () => shopAddModal(items, open, rerender);
+  $("[data-poclr]", body).onclick = () => { st.sel = {}; redraw(); };
+  $("[data-pogo]", body).onclick = () => {
+    const ids = Object.keys(st.sel), tot = ids.reduce((a, id) => a + num(st.sel[id]) * estOf(findO(id)), 0);
+    const m = openModal({ title: (boss ? "สร้างใบสั่งซื้อ " : "ยืนยันส่งขออนุมัติซื้อ ") + ids.length + " รายการ", body: `<div class="q-confirm">${ids.map(id => { const x = findO(id), e = estOf(x);
+        return `<div class="cf-row"><div class="grow"><div class="bold">${esc(x.name)}</div><div class="small muted">${esc(catOf(x))}</div></div><div class="cf-q"><b>${fmtQ(st.sel[id])}</b> ${esc(unitOfSel(x))}${e ? `<div class="small muted">≈ ${fmt(st.sel[id] * e)}</div>` : ""}</div></div>`; }).join("")}</div>
+      ${tot ? `<div class="cf-total">ประมาณการ <b>${baht(tot)}</b> <span class="muted small">(จากต้นทุนเฉลี่ย)</span></div>` : ""}
+      <label class="field" style="margin-top:12px"><span>หมายเหตุ (ไม่บังคับ)</span><input class="input" name="note" placeholder="เช่น ด่วน ใช้พรุ่งนี้เช้า"></label>
+      <div class="info-box" style="margin-top:12px">${boss ? "ใบสั่งซื้อจะอนุมัติทันที พิมพ์ PO ได้เลย · ซื้อมาแล้วกด “ติ๊กของที่ซื้อแล้ว” เพื่อรับเข้าสต็อก" : "ส่งให้ผู้จัดการอนุมัติ — ระหว่างรอ พิมพ์ใบขอซื้อ (PO) ได้"}</div>`,
+      foot: `<button class="btn" data-close>กลับไปแก้</button><button class="btn primary" data-ok>${icon("check")} ${boss ? "สร้างใบสั่งซื้อ" : "ส่งขออนุมัติ"}</button>` });
+    const ok = $("[data-ok]", m.el); ok.onclick = () => withBtn(ok, async () => {
+      const lines = ids.map(id => { const x = findO(id); return x.kind === "auto" ? { itemId: x.itemId, qty: num(st.sel[id]), unit: unitOfSel(x) } : { id: x.id, qty: num(st.sel[id]), unit: unitOfSel(x) }; });
+      const r = await bapi("POST", "/shopping/po", { lines, note: $("[name=note]", m.el).value });
+      st.sel = {}; st.selU = {}; m.close(); toast((r.pending ? "ส่งขออนุมัติแล้ว · " : "สร้างใบสั่งซื้อแล้ว · ") + r.poNo);
+      const g = await bapi("GET", "/shopping/po/" + r.id); rerender(); printPO(g.po, false);
+    }).catch(() => {});
+  };
+}
+// ดูใบ PO + ติ๊กของที่ซื้อแล้ว (ผู้อนุมัติ)
+function poModal(p, d, items, boss, after) {
+  const rowOf = l => d.items.find(x => x.id === l.shopId) || {};
+  const m = openModal({ title: `${esc(p.poNo)} <span class="chip ${PO_ST[p.status][1]}" style="font-size:12px;vertical-align:2px">${PO_ST[p.status][0]}</span>`, size: "lg", body: `
+    <div class="small muted" style="margin-bottom:10px">วันที่ ${thDate(p.date)} · ขอโดย ${esc(p.createdBy)}${p.approvedBy && p.status !== "pending" ? ` · ${p.status === "rejected" ? "ไม่อนุมัติ" : "อนุมัติ"}โดย ${esc(p.approvedBy)}` : ""}${p.note ? ` · หมายเหตุ: ${esc(p.note)}` : ""}</div>
+    <div class="card sh-card">${p.lines.map(l => { const r = rowOf(l), b = r.status === "bought";
+      return `<div class="sh-row ${b ? "done" : ""}" style="cursor:default"><span class="sh-box ${b ? "on" : ""}">${b ? "✓" : ""}</span><div class="grow"><div class="sh-name">${esc(l.name)}</div><div class="small muted">${fmtQ(l.qty)} ${esc(l.unit)}${l.baseQty && l.baseUnit && l.baseUnit !== l.unit ? ` (= ${fmtQ(l.baseQty)} ${esc(l.baseUnit)})` : ""}${l.price ? ` · ≈ ${fmt(l.qty * l.price)}` : ""}${b ? ` · ซื้อแล้ว ${r.boughtQty ? fmtQ(r.boughtQty) + " " + esc(r.boughtUnit) : ""}${r.boughtPrice != null ? " @ " + fmt(r.boughtPrice) : ""}` : ""}</div></div>
+        ${boss && p.status === "approved" && !b && r.id ? `<button class="btn sm primary" data-pobuy="${r.id}">ซื้อแล้ว</button>` : ""}</div>`; }).join("")}</div>
+    ${p.total ? `<div class="cf-total">ประมาณการรวม <b>${baht(p.total)}</b></div>` : ""}`,
+    foot: `<button class="btn" data-close>ปิด</button><button class="btn primary" data-print>${icon("print")} พิมพ์ PO</button>` });
+  $("[data-print]", m.el).onclick = () => printPO(p, true);
+  $$("[data-pobuy]", m.el).forEach(b => { b.onclick = () => { const r = d.items.find(x => x.id === b.dataset.pobuy), l = p.lines.find(y => y.shopId === r.id);
+    m.close(); shopBuyModal({ ...r, kind: "row", qty: l.qty, unit: l.unit }, r.itemId && items.find(i => i.id === r.itemId), after); }; });
+}
+function printPO(p, direct) {
+  const go = () => { const html = companyHead("ใบขอซื้อ / ใบสั่งซื้อ (Purchase Order)", `เลขที่ <b>${esc(p.poNo)}</b><br>วันที่ ${thDate(p.date)}<br>สถานะ: ${PO_ST[p.status][0]}`) +
+    `<p style="margin:0 0 10px"><b>สาขา:</b> ${esc(S.binfo.branch.name)} &nbsp; <b>ผู้ขอซื้อ:</b> ${esc(p.createdBy)}${p.note ? ` &nbsp; <b>หมายเหตุ:</b> ${esc(p.note)}` : ""}</p>
+    <table><thead><tr><th>#</th><th>รายการ</th><th>หมวด</th><th class="num">จำนวน</th><th>หน่วย</th><th class="num">ราคาประมาณ/หน่วย</th><th class="num">รวมประมาณ</th><th style="width:60px">✓</th></tr></thead><tbody>
+    ${p.lines.map((l, k) => `<tr><td>${k + 1}</td><td>${esc(l.name)}${l.note ? `<br><small>${esc(l.note)}</small>` : ""}</td><td>${esc(l.category || "")}</td><td class="num">${fmtQ(l.qty)}</td><td>${esc(l.unit)}${l.baseQty && l.baseUnit && l.baseUnit !== l.unit ? ` <small>(=${fmtQ(l.baseQty)} ${esc(l.baseUnit)})</small>` : ""}</td><td class="num">${l.price ? fmt(l.price) : "-"}</td><td class="num">${l.price ? fmt(l.qty * l.price) : "-"}</td><td></td></tr>`).join("")}</tbody>
+    <tfoot><tr><td colspan="6" class="num">รวมประมาณการ</td><td class="num">${fmt(p.total)}</td><td></td></tr></tfoot></table>
+    <p class="small" style="color:#666">* ราคาประมาณจากต้นทุนเฉลี่ยในสต็อก ราคาจริงบันทึกตอนรับของ</p>
+    <div class="sig"><div>ผู้ขอซื้อ<br><small>${esc(p.createdBy)}</small></div><div>ผู้อนุมัติ<br><small>${p.status !== "pending" && p.status !== "rejected" ? esc(p.approvedBy) : ""}</small></div><div>ผู้รับของ</div></div>`;
+    printHTML(p.poNo, html); };
+  if (direct) return go();
+  const m = openModal({ title: "ส่งแล้ว · " + esc(p.poNo), body: `<div style="text-align:center;padding:8px 0"><div style="font-size:40px">✅</div><div class="bold" style="font-size:16px">${p.status === "pending" ? "ส่งขออนุมัติเรียบร้อย" : "สร้างใบสั่งซื้อเรียบร้อย"}</div><div class="muted small">${p.lines.length} รายการ${p.total ? " · ≈ " + baht(p.total) : ""}</div></div>`,
+    foot: `<button class="btn" data-close>ปิด</button><button class="btn primary" data-p>${icon("print")} พิมพ์ PO</button>` });
+  $("[data-p]", m.el).onclick = () => { m.close(); go(); };
 }
 function shopBuyModal(x, it, after) {
   const isStock = !!it;
@@ -1284,9 +1438,10 @@ function bindCatPicker(root) {
 const MSTATUS = { pending: ["รออนุมัติ", "warn"], approved: ["อนุมัติแล้ว", "good"], rejected: ["ไม่อนุมัติ", "bad"] };
 BRANCH_PAGES.stock = { title: () => "สต็อกสินค้า", state: { tab: "quick", q: "", cat: "", low: false, kind: "", mstatus: "", qcat: "", qq: "", cart: {} }, async render(c) {
   const st = this.state, self = this;
-  const ed = canEdit("stock");
+  const ed = canEdit("stock"), boss = approver("stock");
+  if (!boss && (st.tab === "items" || st.tab === "moves")) st.tab = "quick";
   c.innerHTML = `<div class="page-head stock-head"><div class="grow"><h2>สต็อกสินค้า / วัตถุดิบ</h2><div class="muted small hide-m">ต้นทุนคิดแบบถัวเฉลี่ยถ่วงน้ำหนัก · ซื้อผ่านเอกสารรายจ่ายที่ “ผูกสต็อก” จะรับเข้าสต็อกให้อัตโนมัติ</div></div></div>
-    <div class="tabs"><button data-tab="quick" class="${st.tab === "quick" ? "on" : ""}">${ed ? "เบิกของ" : "สินค้า"}</button><button data-tab="shop" class="${st.tab === "shop" ? "on" : ""}">${icon("check", "").replace("<svg", '<svg style="width:14px;height:14px;vertical-align:-2px"')} รายการที่จะซื้อ</button><button data-tab="items" class="${st.tab === "items" ? "on" : ""}">ตารางคงเหลือ</button><button data-tab="moves" class="${st.tab === "moves" ? "on" : ""}">ประวัติความเคลื่อนไหว</button></div><div data-body></div>`;
+    <div class="tabs"><button data-tab="quick" class="${st.tab === "quick" ? "on" : ""}">${ed ? (boss ? "เบิก / รับเข้า" : "เบิกของ") : "สินค้า"}</button><button data-tab="shop" class="${st.tab === "shop" ? "on" : ""}">${icon("check", "").replace("<svg", '<svg style="width:14px;height:14px;vertical-align:-2px"')} รายการที่จะซื้อ</button>${boss ? `<button data-tab="items" class="${st.tab === "items" ? "on" : ""}">ตารางคงเหลือ</button><button data-tab="moves" class="${st.tab === "moves" ? "on" : ""}">ประวัติความเคลื่อนไหว</button>` : ""}</div><div data-body></div>`;
   $$("[data-tab]", c).forEach(b => { b.onclick = () => { st.tab = b.dataset.tab; self.render(c); }; });
   if (st.tab === "quick") return stockQuick(c, st, self);
   if (st.tab === "shop") return stockShop(c, st, self);
@@ -1331,7 +1486,7 @@ function movesTable(mv, showItem) {
   const canDel = m => m.canEdit;
   S._mvCache = mv;
   return `<table class="tbl"><thead><tr><th>วันที่</th>${showItem ? "<th>สินค้า</th>" : ""}<th>ประเภท</th><th class="num">จำนวน</th><th class="num">ต้นทุน/หน่วย</th><th class="num">มูลค่า</th><th class="num">คงเหลือ</th><th>สถานะ</th><th>อ้างอิง / หมายเหตุ</th><th></th></tr></thead><tbody>
-    ${mv.map(m => { const ap = m.status === "approved"; return `<tr style="${m.status === "rejected" ? "opacity:.6" : ""}"><td>${thDate(m.date, true)}</td>${showItem ? `<td class="bold">${esc(m.itemName)}</td>` : ""}<td><span class="chip ${MOVE[m.kind].chip}">${MOVE[m.kind].th}</span></td>
+    ${mv.map(m => { const ap = m.status === "approved"; return `<tr style="${m.status === "rejected" ? "opacity:.6" : ""}"><td>${thDate(m.date, true)}</td>${showItem ? `<td class="bold">${esc(m.itemName)}</td>` : ""}<td><span class="chip ${m.xferDir ? "violet" : MOVE[m.kind].chip}">${m.xferDir === "out" ? "โยกออก" : m.xferDir === "in" ? "รับโยก" : MOVE[m.kind].th}</span>${m.xferDir ? `<div class="muted small">${m.xferDir === "out" ? "→ " : "← "}${esc(m.xferBranch)}</div>` : ""}</td>
       <td class="num bold ${m.qty < 0 ? "neg" : m.qty > 0 ? "pos" : ""}">${ap || m.kind !== "count" ? (m.qty > 0 ? "+" : "") + fmtQ(m.qty) : "±"} <span class="muted small">${esc(m.unit)}</span>${uNote(m)}${m.kind === "count" ? `<div class="muted small">นับได้ ${fmtQ(m.counted)}</div>` : ""}</td>
       <td class="num">${ap || m.kind === "in" ? fmt(m.unitCost) : "-"}</td><td class="num">${ap ? fmt(m.amount) : "-"}</td><td class="num">${ap ? fmtQ(m.balance) : "-"}</td>
       <td><span class="chip ${MSTATUS[m.status][1]}">${MSTATUS[m.status][0]}</span>${m.status !== "pending" && m.approvedBy && !m.refRecordId ? `<div class="muted small">${esc(m.approvedBy)}</div>` : ""}${m.rejectReason ? `<div class="small neg">${esc(m.rejectReason)}</div>` : ""}</td>
@@ -1934,7 +2089,7 @@ BRANCH_PAGES.approvals = { title: () => "รออนุมัติ", async ren
   let html = "";
   if (r.approve.stock) html += `<div class="card" style="margin-bottom:14px"><div class="card-h"><h3 class="grow">${icon("stock", "").replace("<svg", '<svg style="width:17px;height:17px;vertical-align:-3px"')} สต็อก <span class="chip warn plain">${r.stock.length}</span></h3>${r.stock.length > 1 ? `<button class="btn sm primary" data-allst>อนุมัติที่เลือก</button><button class="btn sm" data-rjst>ไม่อนุมัติที่เลือก</button>` : ""}</div>
     ${r.stock.length ? `<div class="tbl-wrap"><table class="tbl"><thead><tr><th style="width:30px"><input type="checkbox" data-chkall checked></th><th>วันที่</th><th>สินค้า</th><th>ประเภท</th><th class="num">จำนวน</th><th class="num">คงเหลือตอนนี้</th><th>ผู้บันทึก / หมายเหตุ</th><th></th></tr></thead><tbody>
-      ${r.stock.map(m => `<tr><td><input type="checkbox" data-chk="${m.id}" checked></td><td>${thDate(m.date, true)}</td><td class="bold">${esc(m.itemName)}</td><td><span class="chip ${MOVE[m.kind].chip}">${MOVE[m.kind].th}</span></td>
+      ${r.stock.map(m => `<tr><td><input type="checkbox" data-chk="${m.id}" checked></td><td>${thDate(m.date, true)}</td><td class="bold">${esc(m.itemName)}</td><td><span class="chip ${m.xferDir ? "violet" : MOVE[m.kind].chip}">${m.xferDir === "out" ? "โยกออก" : m.xferDir === "in" ? "รับโยก" : MOVE[m.kind].th}</span>${m.xferDir ? `<div class="muted small">${m.xferDir === "out" ? "→ " : "← "}${esc(m.xferBranch)}</div>` : ""}</td>
         <td class="num bold">${m.kind === "count" ? "นับได้ " + fmtQ(m.counted) : (m.qty > 0 ? "+" : "") + fmtQ(m.qty)} <span class="muted small">${esc(m.unit)}</span>${uNote(m)}${m.kind === "in" && m.unitCost ? `<div class="muted small">@ ${fmt(m.unitCost)}</div>` : ""}</td>
         <td class="num">${fmtQ(m.itemQty)}${m.kind === "count" ? `<div class="small ${m.counted - m.itemQty < 0 ? "neg" : "pos"}">ต่าง ${fmtQ(m.counted - m.itemQty)}</div>` : ""}</td><td class="small">${esc(m.createdBy)}<div class="muted">${thDateTime(m.createdAt)}${m.note ? " · " + esc(m.note) : ""}</div></td>
         <td style="white-space:nowrap"><button class="btn sm primary" data-apmove="${m.id}">อนุมัติ</button> <button class="btn sm" data-rjmove="${m.id}">ไม่อนุมัติ</button></td></tr>`).join("")}</tbody></table></div>` : emptyBox("ไม่มีรายการสต็อกรออนุมัติ", "check")}</div>`;
@@ -2189,7 +2344,7 @@ async function listsEditor(c, bid, token, state) {
     <div data-rows>${lists[k].map((x, i) => `<div class="list-row"><div class="row" style="gap:2px"><button class="btn ghost sm icon" data-up="${i}" ${i ? "" : "disabled"}>${icon("up")}</button><button class="btn ghost sm icon" data-dn="${i}" ${i < lists[k].length - 1 ? "" : "disabled"}>${icon("down")}</button></div>
       <div class="grow bold">${esc(x.name)}</div>${fsSel(x)}${k === "payment_channel" ? `<label class="check small"><input type="checkbox" data-cr="${x.id}" ${x.isCredit ? "checked" : ""}> มีวันครบกำหนด</label>${x.isCredit ? `<button class="btn sm ${x.card ? "" : "ghost"}" data-card="${x.id}">${icon("wallet")} ${x.card ? "บัตร: ตัดรอบ " + x.card.cutDay + " / ชำระ " + x.card.dueDay : "ตั้งค่าบัตร"}</button>` : ""}` : ""}
       <button class="btn ghost sm" data-ren="${x.id}">${icon("edit")} เปลี่ยนชื่อ</button><button class="btn ghost sm icon" data-del="${x.id}">${icon("trash")}</button></div>`).join("") || emptyBox("ยังไม่มีรายการ")}</div></div>
-    ${lr.synced ? `<div class="info-box" style="margin-top:12px">${icon("link", "").replace("<svg", '<svg style="width:14px;height:14px;vertical-align:-2px"')} <b>ใช้ร่วมกันทุกสาขา</b> — เพิ่ม / เปลี่ยนชื่อ / ลบ / เรียงลำดับ / ตั้งกลุ่มในงบ ที่นี่ จะมีผลกับทุกสาขาพร้อมกัน (ยอดยกมาของบัญชีเงินยังแยกตามสาขา)</div>` : ""}
+    ${lr.synced ? `<div class="info-box" style="margin-top:12px">${icon("link", "").replace("<svg", '<svg style="width:14px;height:14px;vertical-align:-2px"')} <b>ใช้ร่วมกันทุกสาขา (ในธุรกิจเดียวกัน)</b> — เพิ่ม / เปลี่ยนชื่อ / ลบ / เรียงลำดับ / ตั้งกลุ่มในงบ ที่นี่ จะมีผลกับทุกสาขาพร้อมกัน (ยอดยกมาของบัญชีเงินยังแยกตามสาขา)</div>` : ""}
     ${FSG[k] ? `<div class="info-box" style="margin-top:12px">“กลุ่มในงบ” ใช้จัดหมวดนี้ลงในงบกำไรขาดทุน / งบแสดงฐานะการเงิน — ถ้าไม่เลือก ระบบจะเดาจากชื่อหมวด (แสดงในวงเล็บ “อัตโนมัติ”)</div>` : ""}
     <div class="field-hint" style="margin-top:10px">เปลี่ยนชื่อหมวด → เอกสารเก่าที่ใช้ชื่อเดิมจะเปลี่ยนตามให้อัตโนมัติ · ลบหมวด → เอกสารเก่ายังคงชื่อเดิมไว้</div>`;
   if (ro) $$("[data-add],[data-new],[data-credit],[data-up],[data-dn],[data-cr],[data-ren],[data-del]", c).forEach(x => { x.disabled = true; });
@@ -2236,7 +2391,7 @@ BRANCH_PAGES.password = { title: () => S.binfo.me.kind === "user" ? "เปล�
 /* ===================== admin ===================== */
 function adminNav() {
   const a = "#/admin/";
-  return [{ key: "overview", label: "ภาพรวมทุกสาขา", icon: "dashboard", href: a + "overview" }, { sec: "จัดการ" }, { key: "branches", label: "จัดการสาขา", icon: "building", href: a + "branches" },
+  return [{ key: "overview", label: "ภาพรวมทุกสาขา", icon: "dashboard", href: a + "overview" }, { sec: "จัดการ" }, { key: "businesses", label: "ธุรกิจ", icon: "building", href: a + "businesses" }, { key: "branches", label: "จัดการสาขา", icon: "building", href: a + "branches" },
     { key: "lists", label: "หมวด & ช่องทาง", icon: "settings", href: a + "lists" }, { key: "settings", label: "ตั้งค่าบริษัท & ระบบ", icon: "shield", href: a + "settings" },
     { key: "users", label: "ผู้ใช้งาน & สิทธิ์", icon: "userKey", href: a + "users" }, { key: "admins", label: "ผู้ดูแลระบบ", icon: "users", href: a + "admins" },
     { sec: "ระบบ" }, { key: "activity", label: "Log การใช้งาน", icon: "history", href: a + "activity" },
@@ -2277,21 +2432,425 @@ async function renderAdmin(page, rest) {
   S.adminBranch = null;
   if (!S.info) S.info = await api("GET", "/api/public/info").catch(() => null);
   const P = ADMIN_PAGES[page] || ADMIN_PAGES.overview;
-  document.title = "ผู้ดูแลระบบ · " + ((S.info && S.info.company.name) || "");
-  const c = shell({ kind: "admin", nav: adminNav(), active: ADMIN_PAGES[page] ? page : "overview", title: P.title, crumb: "ผู้ดูแลระบบ", headRight: `<div class="user-chip"><div class="av">${esc(initials(S.admin.username))}</div><span>${esc(S.admin.username)}</span></div>` });
+  try { S.bizList = (await api("GET", "/api/admin/businesses")).businesses; } catch (e) { S.bizList = S.bizList || []; }
+  if (S.biz === undefined) { try { S.biz = localStorage.getItem("biz") || ""; } catch (e) { S.biz = ""; } }
+  if (!S.bizList.some(z => z.id === S.biz)) S.biz = S.bizList[0] ? S.bizList[0].id : "";
+  const bz = curBiz();
+  document.title = "ผู้ดูแลระบบ · " + (bz ? bz.name : "");
+  const c = shell({ kind: "admin", nav: adminNav(), active: ADMIN_PAGES[page] ? page : "overview", title: P.title, crumb: "ผู้ดูแลระบบ" + (bz && S.bizList.length > 1 ? " · " + esc(bz.name) : ""), headRight: `${S.bizList.length > 1 ? `<label class="biz-switch" title="สลับธุรกิจ">${bizLogo(bz, 26)}<select data-bizsw>${S.bizList.map(z => opt(z.id, z.name, z.id === S.biz)).join("")}</select></label>` : ""}<button class="user-chip" data-adminme><div class="av">${esc(initials(S.admin.username))}</div><span>${esc(S.admin.username)}</span>${icon("logout", "")}</button>` });
+  const sw = $("[data-bizsw]"); if (sw) sw.onchange = () => { setBiz(sw.value); toast("สลับเป็น " + curBiz().name); render(); };
   try { await P.render(c, rest); } catch (e) { if (e.status !== 401) c.innerHTML = `<div class="err-box">${esc(e.message)}</div>`; }
 }
 function openBranchAsAdmin(id) { S.adminBranch = id; S.bid = null; S.binfo = null; go("#/b/" + id + "/dashboard"); }
 
+/* =====================================================================
+   POS ขายหน้าร้าน (v3.0)
+   ===================================================================== */
+const POS_L = {
+  th: { sell: "ขายหน้าร้าน", search: "ค้นหาเมนู", all: "ทั้งหมด", cart: "ตะกร้า", empty: "ยังไม่มีรายการ — แตะเมนูเพื่อเพิ่ม", total: "รวม", pay: "ชำระเงิน", clear: "ล้าง", soldout: "หมด", left: "เหลือ",
+    type: "แบบ / ขนาด", qty: "จำนวน", addons: "เพิ่ม (Add-on)", note: "หมายเหตุ", notePh: "เช่น ไม่เผ็ด ไม่ใส่ผัก", add: "ใส่ตะกร้า", added: "เพิ่มแล้ว", discount: "ส่วนลด (บาท)", method: "วิธีชำระ",
+    qr: "QR โอนเงิน", cash: "เงินสด", other: "ช่องทางอื่น", received: "รับเงินมา", change: "เงินทอน", exact: "พอดี", slip: "แนบสลิป (ไม่บังคับ)", confirmPaid: "ยืนยันรับเงินแล้ว", scan: "ให้ลูกค้าสแกนจ่ายตามยอดนี้",
+    queue: "คิว", paidOk: "รับเงินเรียบร้อย", newSale: "ขายต่อ", print: "พิมพ์ใบเสร็จ", orders: "ออเดอร์ / คิว", waiting: "รอทำ", ready: "เสร็จแล้ว", allDay: "ทั้งหมดวันนี้", done: "ทำเสร็จ", undo: "ย้อนกลับ",
+    cancel: "ยกเลิก / คืนเงิน", noOrders: "ยังไม่มีออเดอร์", channel: "ช่องทาง", notEnough: "รับเงินไม่พอ", noQr: "ยังไม่ได้ตั้งค่า QR รับเงิน — ให้ผู้จัดการตั้งที่ “เมนู & ตั้งค่า POS”", display: "จอลูกค้า", items: "รายการ",
+    noMenu: "ยังไม่มีเมนู — ให้ผู้จัดการเพิ่มที่ “เมนู & ตั้งค่า POS”", fast: "แตะ = เพิ่ม 1", refundDone: "คืนเงินแล้ว", cancelled: "ยกเลิกแล้ว", refunded: "คืนเงินบางส่วน" },
+  en: { sell: "Sell", search: "Search menu", all: "All", cart: "Cart", empty: "Cart is empty — tap a menu item", total: "Total", pay: "Pay", clear: "Clear", soldout: "Sold out", left: "Left",
+    type: "Type / Size", qty: "Quantity", addons: "Add-ons", note: "Note", notePh: "e.g. not spicy, no vegetables", add: "Add to cart", added: "Added", discount: "Discount (THB)", method: "Payment",
+    qr: "QR transfer", cash: "Cash", other: "Other", received: "Cash received", change: "Change", exact: "Exact", slip: "Attach slip (optional)", confirmPaid: "Payment received", scan: "Customer scans to pay this amount",
+    queue: "Queue", paidOk: "Payment complete", newSale: "Next sale", print: "Print receipt", orders: "Orders / Queue", waiting: "To cook", ready: "Ready", allDay: "All today", done: "Done", undo: "Undo",
+    cancel: "Cancel / Refund", noOrders: "No orders yet", channel: "Channel", notEnough: "Not enough cash", noQr: "Payment QR is not set up — ask the manager", display: "Customer screen", items: "items",
+    noMenu: "No menu yet — ask the manager to add items", fast: "Tap = add 1", refundDone: "Refunded", cancelled: "Cancelled", refunded: "Partly refunded" },
+  my: { sell: "ရောင်းမည်", search: "မီနူးရှာရန်", all: "အားလုံး", cart: "ခြင်းတောင်း", empty: "ဘာမှမရှိသေးပါ — မီနူးကိုနှိပ်ပါ", total: "စုစုပေါင်း", pay: "ငွေရှင်းမည်", clear: "ရှင်းမည်", soldout: "ကုန်ပြီ", left: "ကျန်",
+    type: "အမျိုးအစား / အရွယ်", qty: "အရေအတွက်", addons: "အပိုထည့်ရန်", note: "မှတ်ချက်", notePh: "ဥပမာ မစပ်ပါ၊ ဟင်းသီးဟင်းရွက်မထည့်ပါ", add: "ခြင်းထဲထည့်", added: "ထည့်ပြီး", discount: "လျှော့စျေး (ဘတ်)", method: "ငွေပေးချေမှု",
+    qr: "QR ငွေလွှဲ", cash: "ငွေသား", other: "အခြား", received: "လက်ခံငွေ", change: "ပြန်အမ်းငွေ", exact: "အတိအကျ", slip: "ငွေလွှဲစာရွက် (မဖြစ်မနေမဟုတ်)", confirmPaid: "ငွေရပြီ", scan: "ဖောက်သည် QR စကင်ဖတ်ပြီး ပေးချေရန်",
+    queue: "တန်းစီနံပါတ်", paidOk: "ငွေရှင်းပြီးပါပြီ", newSale: "နောက်တစ်ခု", print: "ပြေစာထုတ်", orders: "အော်ဒါ / တန်းစီ", waiting: "ချက်ရန်", ready: "ပြီးပြီ", allDay: "ယနေ့အားလုံး", done: "ပြီးပြီ", undo: "ပြန်ပြင်",
+    cancel: "ပယ်ဖျက် / ငွေပြန်", noOrders: "အော်ဒါမရှိသေးပါ", channel: "နည်းလမ်း", notEnough: "ငွေမလုံလောက်ပါ", noQr: "QR မသတ်မှတ်ရသေးပါ — မန်နေဂျာကိုပြောပါ", display: "ဖောက်သည်မျက်နှာပြင်", items: "ခု",
+    noMenu: "မီနူးမရှိသေးပါ", fast: "နှိပ် = ၁ ခုထည့်", refundDone: "ငွေပြန်ပေးပြီး", cancelled: "ပယ်ဖျက်ပြီး", refunded: "တစ်စိတ်တစ်ပိုင်းပြန်ပေး" },
+  lo: { sell: "ຂາຍໜ້າຮ້ານ", search: "ຄົ້ນຫາເມນູ", all: "ທັງໝົດ", cart: "ກະຕ່າ", empty: "ຍັງບໍ່ມີລາຍການ — ແຕະເມນູເພື່ອເພີ່ມ", total: "ລວມ", pay: "ຈ່າຍເງິນ", clear: "ລ້າງ", soldout: "ໝົດ", left: "ເຫຼືອ",
+    type: "ແບບ / ຂະໜາດ", qty: "ຈຳນວນ", addons: "ເພີ່ມ (Add-on)", note: "ໝາຍເຫດ", notePh: "ເຊັ່ນ ບໍ່ເຜັດ ບໍ່ໃສ່ຜັກ", add: "ໃສ່ກະຕ່າ", added: "ເພີ່ມແລ້ວ", discount: "ສ່ວນຫຼຸດ (ບາດ)", method: "ວິທີຈ່າຍ",
+    qr: "QR ໂອນເງິນ", cash: "ເງິນສົດ", other: "ຊ່ອງທາງອື່ນ", received: "ຮັບເງິນມາ", change: "ເງິນທອນ", exact: "ພໍດີ", slip: "ແນບສະລິບ (ບໍ່ບັງຄັບ)", confirmPaid: "ຢືນຢັນຮັບເງິນແລ້ວ", scan: "ໃຫ້ລູກຄ້າສະແກນຈ່າຍຕາມຍອດນີ້",
+    queue: "ຄິວ", paidOk: "ຮັບເງິນສຳເລັດ", newSale: "ຂາຍຕໍ່", print: "ພິມໃບບິນ", orders: "ອໍເດີ / ຄິວ", waiting: "ລໍຖ້າເຮັດ", ready: "ເຮັດແລ້ວ", allDay: "ທັງໝົດມື້ນີ້", done: "ເຮັດແລ້ວ", undo: "ຍ້ອນກັບ",
+    cancel: "ຍົກເລີກ / ຄືນເງິນ", noOrders: "ຍັງບໍ່ມີອໍເດີ", channel: "ຊ່ອງທາງ", notEnough: "ຮັບເງິນບໍ່ພໍ", noQr: "ຍັງບໍ່ໄດ້ຕັ້ງ QR ຮັບເງິນ — ບອກຜູ້ຈັດການ", display: "ຈໍລູກຄ້າ", items: "ລາຍການ",
+    noMenu: "ຍັງບໍ່ມີເມນູ", fast: "ແຕະ = ເພີ່ມ 1", refundDone: "ຄືນເງິນແລ້ວ", cancelled: "ຍົກເລີກແລ້ວ", refunded: "ຄືນເງິນບາງສ່ວນ" } };
+const POS_LANGS = [["th", "ไทย"], ["en", "EN"], ["my", "မြန်မာ"], ["lo", "ລາວ"]];
+const posLang = () => { if (!S.posLang) { try { S.posLang = localStorage.getItem("posLang") || "th"; } catch (e) { S.posLang = "th"; } } return POS_L[S.posLang] ? S.posLang : "th"; };
+const PT = k => (POS_L[posLang()] || POS_L.th)[k] || POS_L.th[k] || k;
+const posName = m => (m && m.names && m.names[posLang()]) || (m && m.name) || "";
+const posImg = m => m.imageV ? authUrl("/pos/menu/" + m.id + "/image?v=" + m.imageV) : "";
+const posLangBar = () => `<div class="pos-lang">${POS_LANGS.map(([k, l]) => `<button data-plang="${k}" class="${posLang() === k ? "on" : ""}">${l}</button>`).join("")}</div>`;
+function bindPosLang(root, redraw) { $$("[data-plang]", root).forEach(b => { b.onclick = () => { S.posLang = b.dataset.plang; try { localStorage.setItem("posLang", S.posLang); } catch (e) {} redraw(); }; }); }
+async function posBoot(force) { if (force || !S.posBoot || S.posBoot._bid !== S.bid) { S.posBoot = await bapi("GET", "/pos/boot"); S.posBoot._bid = S.bid; } return S.posBoot; }
+const posCats = boot => { const used = [...new Set(boot.menu.map(m => m.category || "อื่นๆ"))], order = boot.config.menuCats || []; return used.sort((a, b) => { const ia = order.indexOf(a), ib = order.indexOf(b); return (ia < 0 ? 999 : ia) - (ib < 0 ? 999 : ib) || a.localeCompare(b, "th"); }); };
+const posLineTotal = l => r2(l.price * l.qty + (l.addons || []).reduce((a, x) => a + x.price * x.qty, 0));
+function posStopTimers() { if (S.posTimer) { clearInterval(S.posTimer); S.posTimer = null; } }
+
+/* ---------- หน้าขาย ---------- */
+BRANCH_PAGES.pos = { title: () => "POS ขายหน้าร้าน", nav: "pos", state: { cat: "", q: "" }, async render(c) {
+  const st = this.state, self = this;
+  const boot = await posBoot(true);
+  S.posCart = S.posCart || [];
+  const left = m => m.dailyLimit == null ? null : Math.max(0, m.dailyLimit - m.soldToday - S.posCart.filter(l => l.menuId === m.id).reduce((a, l) => a + l.qty, 0));
+  const isOut = m => m.soldout || (m.dailyLimit != null && left(m) <= 0);
+  c.innerHTML = `<div class="pos-wrap"><div class="pos-main">
+      <div class="pos-top"><div class="search grow" style="max-width:none">${icon("search")}<input class="input" data-pq placeholder="${PT("search")}" value="${esc(st.q)}"></div>${posLangBar()}</div>
+      ${!boot.config.qrReady ? `<div class="info-box warn-box" style="margin-bottom:10px">${PT("noQr")}</div>` : ""}
+      <div class="cat-chips pos-cats" data-pcats></div><div class="pos-grid" data-pgrid></div></div>
+    <aside class="pos-cart" data-pcart></aside></div>
+    <div class="pos-cartbar" data-pbar></div>`;
+  const drawCats = () => { const cats = posCats(boot);
+    $("[data-pcats]", c).innerHTML = `<button data-pc="" class="${!st.cat ? "on" : ""}">${PT("all")}</button>` + cats.map(n => `<button data-pc="${esc(n)}" class="${st.cat === n ? "on" : ""}">${esc(n)}</button>`).join("");
+    $$("[data-pc]", c).forEach(b => { b.onclick = () => { st.cat = b.dataset.pc; drawCats(); drawGrid(); }; }); };
+  const drawGrid = () => {
+    const q = st.q.toLowerCase();
+    const list = boot.menu.filter(m => m.active && (!st.cat || (m.category || "อื่นๆ") === st.cat) && (!q || (m.name + " " + Object.values(m.names || {}).join(" ")).toLowerCase().includes(q)));
+    $("[data-pgrid]", c).innerHTML = list.length ? list.map(m => { const out = isOut(m), lf = left(m), inCart = S.posCart.filter(l => l.menuId === m.id).reduce((a, l) => a + l.qty, 0);
+      const minP = m.types.length ? Math.min(...m.types.map(t => t.price)) : m.price;
+      return `<button class="pos-item ${out ? "out" : ""}" data-pm="${m.id}">${posImg(m) ? `<span class="pi-img" style="background-image:url('${posImg(m)}')"></span>` : `<span class="pi-img ph">${esc((posName(m) || "?").slice(0, 2))}</span>`}
+        ${inCart ? `<span class="pi-badge">${inCart}</span>` : ""}${out ? `<span class="pi-out">${PT("soldout")}</span>` : ""}
+        <span class="pi-name">${esc(posName(m))}</span><span class="pi-price">${m.types.length > 1 ? "฿" + fmt(minP).replace(/\.00$/, "") + "+" : "฿" + fmt(minP).replace(/\.00$/, "")}${lf != null && !out ? ` <small>· ${PT("left")} ${lf}</small>` : ""}</span></button>`; }).join("")
+      : emptyBox(boot.menu.length ? "—" : PT("noMenu"), "stock");
+    $$("[data-pm]", c).forEach(b => { b.onclick = () => { const m = boot.menu.find(x => x.id === b.dataset.pm); if (isOut(m)) return toast(PT("soldout"), "bad");
+      if (m.types.length <= 1 && !m.addons.length) { posAdd({ menuId: m.id, name: m.name, names: m.names, type: m.types[0] ? m.types[0].name : "", price: m.types[0] ? m.types[0].price : m.price, qty: 1, addons: [], note: "" }); return; }
+      posItemModal(m, left(m)); }; });
+  };
+  const posAdd = line => { const same = S.posCart.find(l => l.menuId === line.menuId && l.type === line.type && !l.note && !line.note && !(l.addons || []).length && !line.addons.length);
+    if (same) same.qty += line.qty; else S.posCart.push({ ...line, key: Math.random().toString(36).slice(2) });
+    drawGrid(); drawCart(); pushDisplay(); };
+  const pushDisplay = debounce(() => { const tot = S.posCart.reduce((a, l) => a + posLineTotal(l), 0);
+    bapi("POST", "/pos/display", S.posCart.length ? { mode: "cart", amount: tot, items: S.posCart.map(l => ({ name: l.name + (l.type ? " (" + l.type + ")" : ""), qty: l.qty, total: posLineTotal(l) })) } : { mode: "idle" }).catch(() => {}); }, 400);
+  const drawCart = () => {
+    const tot = r2(S.posCart.reduce((a, l) => a + posLineTotal(l), 0)), n = S.posCart.reduce((a, l) => a + l.qty, 0);
+    const html = `<div class="pc-head"><b>${PT("cart")}</b><span class="grow"></span>${S.posCart.length ? `<button class="btn sm ghost" data-pclear>${PT("clear")}</button>` : ""}<button class="btn sm ghost icon pc-x" data-pcx>${icon("x")}</button></div>
+      <div class="pc-lines">${S.posCart.length ? S.posCart.map((l, i) => `<div class="pc-line"><div class="grow"><div class="bold">${esc(posName(l))}</div>
+          <div class="small muted">${l.type ? esc(l.type) + " · " : ""}฿${fmt(l.price)}${(l.addons || []).map(a => `<br>+ ${esc(a.name)} ×${a.qty}`).join("")}${l.note ? `<br>📝 ${esc(l.note)}` : ""}</div></div>
+          <div class="pc-qty"><button data-pdec="${i}">−</button><b>${l.qty}</b><button data-pinc="${i}">+</button></div><div class="pc-amt">${fmt(posLineTotal(l))}</div></div>`).join("") : `<div class="muted small" style="padding:18px 4px;text-align:center">${PT("empty")}</div>`}</div>
+      <div class="pc-foot"><div class="pc-total"><span>${PT("total")}</span><b>฿${fmt(tot)}</b></div><button class="btn primary pc-pay" data-ppay ${S.posCart.length && boot.canSell ? "" : "disabled"}>${icon("cash")} ${PT("pay")}</button></div>`;
+    $("[data-pcart]", c).innerHTML = html;
+    $("[data-pbar]", c).innerHTML = S.posCart.length ? `<button class="pcb-open" data-popen><span class="pcb-n">${n}</span><span class="grow">${PT("cart")} · ฿${fmt(tot)}</span></button><button class="btn primary" data-ppay>${PT("pay")}</button>` : "";
+    $("[data-pbar]", c).classList.toggle("show", !!S.posCart.length);
+    $$("[data-pdec]", c).forEach(b => { b.onclick = () => { const l = S.posCart[+b.dataset.pdec]; l.qty--; if (l.qty <= 0) S.posCart.splice(+b.dataset.pdec, 1); drawGrid(); drawCart(); pushDisplay(); }; });
+    $$("[data-pinc]", c).forEach(b => { b.onclick = () => { const l = S.posCart[+b.dataset.pinc], m = boot.menu.find(x => x.id === l.menuId); if (m && left(m) === 0) return toast(PT("soldout"), "bad"); l.qty++; drawGrid(); drawCart(); pushDisplay(); }; });
+    const cl = $("[data-pclear]", c); if (cl) cl.onclick = () => { S.posCart = []; drawGrid(); drawCart(); pushDisplay(); };
+    $$("[data-ppay]", c).forEach(b => { b.onclick = () => posCheckout(boot, () => self.render(c)); });
+    const op = $("[data-popen]", c); if (op) op.onclick = () => { $(".pos-cart", c).classList.add("open"); };
+    $("[data-pcx]", c).onclick = () => $(".pos-cart", c).classList.remove("open");
+  };
+  $("[data-pcart]", c).addEventListener("click", e => { if (e.target === e.currentTarget) e.currentTarget.classList.remove("open"); });
+  function posItemModal(m, lf) {
+    let ti = 0, qty = 1; const aq = m.addons.map(() => 0);
+    const types = m.types.length ? m.types : [{ name: "", price: m.price }];
+    const md = openModal({ title: esc(posName(m)), body: `${posImg(m) ? `<div class="pm-img" style="background-image:url('${posImg(m)}')"></div>` : ""}
+      ${types.length > 1 ? `<div class="pm-lbl">${PT("type")}</div><div class="pm-opts">${types.map((t, i) => `<button type="button" class="pm-opt ${i ? "" : "on"}" data-ti="${i}">${esc(t.name)}<b>฿${fmt(t.price).replace(/\.00$/, "")}</b></button>`).join("")}</div>` : ""}
+      <div class="pm-lbl">${PT("qty")}${lf != null ? ` <span class="muted small">(${PT("left")} ${lf})</span>` : ""}</div><div class="pm-qty"><button type="button" data-qd>−</button><b data-qv>1</b><button type="button" data-qi>+</button></div>
+      ${m.addons.length ? `<div class="pm-lbl">${PT("addons")}</div>${m.addons.map((a, i) => `<div class="pm-add"><span class="grow">${esc(a.name)} <span class="muted">+฿${fmt(a.price).replace(/\.00$/, "")}</span></span><div class="pm-qty sm"><button type="button" data-ad="${i}">−</button><b data-av="${i}">0</b><button type="button" data-ai="${i}">+</button></div></div>`).join("")}` : ""}
+      <div class="pm-lbl">${PT("note")}</div><input class="input" data-pnote placeholder="${PT("notePh")}">`,
+      foot: `<button class="btn primary pm-addbtn" data-padd>${icon("plus")} ${PT("add")} · <span data-plt></span></button>` });
+    const el = md.el, upd = () => { $("[data-qv]", el).textContent = qty; aq.forEach((v, i) => { $(`[data-av="${i}"]`, el).textContent = v; }); $("[data-plt]", el).textContent = "฿" + fmt(types[ti].price * qty + m.addons.reduce((a, x, i) => a + x.price * aq[i], 0)); };
+    $$("[data-ti]", el).forEach(b => { b.onclick = () => { ti = +b.dataset.ti; $$("[data-ti]", el).forEach(x => x.classList.toggle("on", x === b)); upd(); }; });
+    $("[data-qd]", el).onclick = () => { qty = Math.max(1, qty - 1); upd(); }; $("[data-qi]", el).onclick = () => { if (lf != null && qty >= lf) return toast(PT("left") + " " + lf, "bad"); qty++; upd(); };
+    $$("[data-ad]", el).forEach(b => { b.onclick = () => { aq[+b.dataset.ad] = Math.max(0, aq[+b.dataset.ad] - 1); upd(); }; }); $$("[data-ai]", el).forEach(b => { b.onclick = () => { aq[+b.dataset.ai]++; upd(); }; });
+    $("[data-padd]", el).onclick = () => { posAdd({ menuId: m.id, name: m.name, names: m.names, type: types[ti].name, price: types[ti].price, qty, addons: m.addons.map((a, i) => ({ name: a.name, price: a.price, qty: aq[i] })).filter(a => a.qty), note: $("[data-pnote]", el).value.trim() }); md.close(); toast(PT("added")); };
+    upd();
+  }
+  $("[data-pq]", c).oninput = debounce(e => { st.q = e.target.value; drawGrid(); }, 120);
+  bindPosLang(c, () => self.render(c));
+  drawCats(); drawGrid(); drawCart();
+} };
+/* ---------- ชำระเงิน ---------- */
+function posCheckout(boot, after) {
+  const sub = r2(S.posCart.reduce((a, l) => a + posLineTotal(l), 0));
+  let method = boot.config.qrReady ? "qr" : "cash", disc = 0, slip = null, qrFor = null;
+  const total = () => r2(Math.max(0, sub - disc));
+  const others = boot.channels.filter(n => n !== boot.config.chQr && n !== boot.config.chCash);
+  const m = openModal({ title: PT("pay") + " · ฿" + fmt(sub), size: "lg", body: `<div class="pay-modal">
+      <div class="pay-total"><span>${PT("total")}</span><b data-ptot>฿${fmt(sub)}</b></div>
+      <div class="pay-methods">${[["qr", "qr", PT("qr")], ["cash", "cash", PT("cash")], ["other", "wallet", PT("other")]].map(([k, ic, l]) => `<button type="button" data-pmeth="${k}" class="${k === method ? "on" : ""}">${icon(ic === "qr" ? "image" : ic)} ${l}</button>`).join("")}</div>
+      <div data-ppanel></div>
+      <details class="pay-more"><summary>${PT("discount")} / ${PT("note")}</summary><div class="grid g2" style="margin-top:8px"><label class="field"><span>${PT("discount")}</span><input class="input num" data-pdisc inputmode="decimal" placeholder="0"></label><label class="field"><span>${PT("note")}</span><input class="input" data-pnote2></label></div></details></div>`,
+    foot: `<button class="btn" data-close>${icon("x")}</button><button class="btn primary pay-ok" data-pok>${icon("check")} ${PT("confirmPaid")}</button>` });
+  const el = m.el;
+  const oc = m.close; m.close = () => { oc(); bapi("POST", "/pos/display", { mode: "cart", amount: sub, items: S.posCart.map(l => ({ name: l.name, qty: l.qty, total: posLineTotal(l) })) }).catch(() => {}); };
+  $$("[data-close],[data-x]", el).forEach(b => { b.onclick = () => m.close(); });
+  const drawPanel = async () => {
+    $("[data-ptot]", el).textContent = "฿" + fmt(total());
+    $$("[data-pmeth]", el).forEach(b => b.classList.toggle("on", b.dataset.pmeth === method));
+    const p = $("[data-ppanel]", el);
+    if (method === "qr") {
+      if (!boot.config.qrReady) { p.innerHTML = `<div class="info-box warn-box">${PT("noQr")}</div>`; return; }
+      p.innerHTML = `<div class="pay-qr"><div class="pq-card"><div class="pq-head">THAI QR PAYMENT</div><div class="pq-box" data-pqbox><div class="muted">…</div></div><div class="pq-amt">฿${fmt(total())}</div><div class="small" style="opacity:.85">${PT("scan")}</div></div>
+        <label class="btn sm" style="margin-top:10px">${icon("upload")} ${PT("slip")}<input type="file" accept="image/*" data-pslip hidden></label><div data-pslipv></div></div>`;
+      if (qrFor !== total()) { try { const r = await bapi("POST", "/pos/qr", { amount: total() }); qrFor = total(); S._posQr = r.svg; } catch (e) { p.innerHTML = `<div class="err-box">${esc(e.message)}</div>`; return; } }
+      $("[data-pqbox]", el).innerHTML = S._posQr;
+      $("[data-pslip]", el).onchange = async e => { const f = e.target.files[0]; if (!f) return; try { slip = await resizeToDataUrl(f, 1400, .8); $("[data-pslipv]", el).innerHTML = `<img src="${slip}" class="pay-slip">`; } catch (er) { toast(er.message, "bad"); } };
+    } else if (method === "cash") {
+      const t = total(), quick = [...new Set([t, ...[20, 50, 100, 500, 1000].map(v => Math.ceil(t / v) * v)].filter(v => v >= t))].slice(0, 5);
+      p.innerHTML = `<div class="pay-cash"><label class="field"><span>${PT("received")}</span><input class="input num big" data-pcash inputmode="decimal" placeholder="${fmt(t)}"></label>
+        <div class="pay-quick">${quick.map(v => `<button type="button" data-pq="${v}">${v === t ? PT("exact") : "฿" + v.toLocaleString()}</button>`).join("")}</div>
+        <div class="pay-change"><span>${PT("change")}</span><b data-pchg>฿0.00</b></div></div>`;
+      const inp = $("[data-pcash]", el), upd = () => { const v = num(inp.value); const ch = inp.value === "" ? 0 : v - t; $("[data-pchg]", el).textContent = ch < 0 ? PT("notEnough") : "฿" + fmt(ch); $("[data-pchg]", el).classList.toggle("neg", ch < 0); };
+      inp.oninput = upd; $$("[data-pq]", el).forEach(b => { b.onclick = () => { inp.value = b.dataset.pq; upd(); }; }); setTimeout(() => inp.focus(), 50);
+      bapi("POST", "/pos/display", { mode: "cart", amount: t, items: S.posCart.map(l => ({ name: l.name, qty: l.qty, total: posLineTotal(l) })) }).catch(() => {});
+    } else {
+      p.innerHTML = `<label class="field"><span>${PT("channel")}</span><select class="input" data-pch>${(others.length ? others : boot.channels).map(n => opt(n)).join("")}</select></label>`;
+    }
+  };
+  $$("[data-pmeth]", el).forEach(b => { b.onclick = () => { method = b.dataset.pmeth; drawPanel(); }; });
+  $("[data-pdisc]", el).oninput = debounce(e => { disc = Math.min(sub, Math.max(0, num(e.target.value))); qrFor = null; drawPanel(); }, 350);
+  drawPanel();
+  const ok = $("[data-pok]", el); ok.onclick = () => withBtn(ok, async () => {
+    const body = { items: S.posCart.map(l => ({ menuId: l.menuId, type: l.type, qty: l.qty, addons: l.addons, note: l.note })), discount: disc, payMethod: method, note: $("[data-pnote2]", el).value };
+    if (method === "cash") { const v = $("[data-pcash]", el).value; if (v !== "") { if (num(v) < total()) throw new Error(PT("notEnough")); body.cashReceived = num(v); } }
+    if (method === "qr") { if (!boot.config.qrReady) throw new Error(PT("noQr")); if (slip) body.slip = slip; }
+    if (method === "other") body.payChannel = $("[data-pch]", el).value;
+    const r = await bapi("POST", "/pos/orders", body);
+    S.posCart = []; oc(); posDone(r.order, boot, after);
+  }).catch(() => {});
+}
+function posDone(o, boot, after) {
+  const m = openModal({ title: PT("paidOk"), body: `<div class="pos-done"><div class="pd-ic">✓</div><div class="muted">${PT("queue")}</div><div class="pd-q">${esc(o.queueNo)}</div>
+      <div class="pd-amt">฿${fmt(o.total)} · ${esc(o.payChannel)}</div>${o.change != null ? `<div class="pd-chg">${PT("change")} <b>฿${fmt(o.change)}</b></div>` : ""}</div>`,
+    foot: `<button class="btn" data-prc>${icon("print")} ${PT("print")}</button><button class="btn primary" data-pnew>${PT("newSale")}</button>` });
+  $("[data-prc]", m.el).onclick = () => posReceipt(o, boot);
+  $("[data-pnew]", m.el).onclick = () => { m.close(); bapi("POST", "/pos/display", { mode: "idle" }).catch(() => {}); after(); };
+  const oc = m.close; m.close = () => { oc(); after(); };
+}
+function posReceipt(o, boot) {
+  const shop = boot.config.shopName || S.binfo.branch.name, co = S.binfo.company || {};
+  const d = new Date(o.createdAt);
+  const html = `<div class="rc">${co.logo ? `<img src="${esc(co.logo)}" class="rc-logo">` : ""}<div class="rc-shop">${esc(shop)}</div>${S.binfo.branch.address ? `<div class="rc-s">${esc(S.binfo.branch.address)}</div>` : ""}${co.taxId ? `<div class="rc-s">เลขผู้เสียภาษี ${esc(co.taxId)}</div>` : ""}
+    <div class="rc-q">คิว ${esc(o.queueNo)}</div><div class="rc-s">${thDate(o.date)} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")} · ${esc(o.createdBy)}</div><hr>
+    ${o.items.map(i => `<div class="rc-row"><span>${i.qty}× ${esc(i.name)}${i.type ? " (" + esc(i.type) + ")" : ""}</span><span>${fmt(i.price * i.qty)}</span></div>${(i.addons || []).map(a => `<div class="rc-row rc-sub"><span>+ ${esc(a.name)} ×${a.qty}</span><span>${fmt(a.price * a.qty)}</span></div>`).join("")}${i.note ? `<div class="rc-sub">📝 ${esc(i.note)}</div>` : ""}`).join("")}<hr>
+    ${o.discount ? `<div class="rc-row"><span>รวม</span><span>${fmt(o.subtotal)}</span></div><div class="rc-row"><span>ส่วนลด</span><span>-${fmt(o.discount)}</span></div>` : ""}
+    <div class="rc-row rc-tot"><span>ยอดสุทธิ</span><span>${fmt(o.total)}</span></div><div class="rc-row"><span>${esc(o.payChannel)}</span><span>${o.cashReceived != null ? fmt(o.cashReceived) : fmt(o.total)}</span></div>${o.change != null ? `<div class="rc-row"><span>เงินทอน</span><span>${fmt(o.change)}</span></div>` : ""}
+    ${o.refund ? `<div class="rc-row"><span>คืนเงิน</span><span>-${fmt(o.refund)}</span></div>` : ""}<hr><div class="rc-s" style="text-align:center">${esc(boot.config.receiptFooter || "")}</div></div>`;
+  printHTML("ใบเสร็จ คิว " + o.queueNo, html, `@page{size:80mm auto;margin:3mm}body{font-size:12px}.rc{width:72mm;margin:0 auto}.rc-logo{display:block;margin:0 auto 4px;max-width:28mm;max-height:18mm}.rc-shop{text-align:center;font-weight:700;font-size:15px}.rc-s{text-align:center;color:#444;font-size:11px}.rc-q{text-align:center;font-size:26px;font-weight:800;margin:6px 0 2px}.rc-row{display:flex;justify-content:space-between;gap:8px;padding:1px 0}.rc-sub{font-size:11px;color:#444;padding-left:10px}.rc-tot{font-weight:800;font-size:15px}hr{border:0;border-top:1px dashed #999;margin:6px 0}`);
+}
+
+/* ---------- ออเดอร์ / คิว ---------- */
+BRANCH_PAGES.posorders = { title: () => "ออเดอร์ / คิว", nav: "posorders", state: { tab: "paid", date: "" }, async render(c) {
+  const st = this.state, self = this; posStopTimers();
+  const boot = await posBoot();
+  st.date = st.date || today();
+  c.innerHTML = `<div class="page-head"><div class="grow"><h2>${PT("orders")}</h2></div>${posLangBar()}</div>
+    <div class="row wrap" style="margin-bottom:12px"><div class="seg" data-otab>${[["paid", PT("waiting")], ["prepared", PT("ready")], ["", PT("allDay")]].map(([k, l]) => `<button data-ot="${k}" class="${st.tab === k ? "on" : ""}">${l} <span data-on="${k}"></span></button>`).join("")}</div>
+      <input type="date" class="input" style="width:auto" data-odate value="${st.date}"><span class="muted small grow" data-oupd></span></div>
+    <div class="pos-orders" data-olist></div>`;
+  const draw = async () => {
+    let o; try { o = (await bapi("GET", "/pos/orders?from=" + st.date + "&to=" + st.date)).orders; } catch (e) { posStopTimers(); return; }
+    if (!document.body.contains(c) || location.hash.indexOf("/posorders") < 0) { posStopTimers(); return; }
+    const cnt = k => o.filter(x => !k || x.status === k).length;
+    ["paid", "prepared", ""].forEach(k => { const e = $(`[data-on="${k}"]`, c); if (e) e.textContent = cnt(k) ? "(" + cnt(k) + ")" : ""; });
+    const list = o.filter(x => !st.tab || x.status === st.tab).sort((a, b) => st.tab === "paid" ? a.createdAt - b.createdAt : b.createdAt - a.createdAt);
+    const ST = { paid: [PT("waiting"), "warn"], prepared: [PT("ready"), "good"], cancelled: [PT("cancelled"), "bad"], refunded: [PT("refunded"), "violet"] };
+    $("[data-olist]", c).innerHTML = list.length ? list.map(x => { const d = new Date(x.createdAt);
+      return `<div class="po-ord ${x.status}"><div class="pod-top"><div class="pod-q">${esc(x.queueNo)}</div><div class="grow"><span class="chip ${ST[x.status][1]}">${ST[x.status][0]}</span><div class="small muted">${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")} · ${esc(x.createdBy)}</div></div><div class="pod-amt">฿${fmt(x.total)}<div class="small muted">${esc(x.payChannel)}</div></div></div>
+        <div class="pod-items">${x.items.map(i => `<div><b>${i.qty}×</b> ${esc(posName(boot.menu.find(mm => mm.id === i.menuId) || i))}${i.type ? ` <span class="muted">(${esc(i.type)})</span>` : ""}${(i.addons || []).map(a => ` <span class="chip plain">+${esc(a.name)}×${a.qty}</span>`).join("")}${i.note ? `<div class="pod-note">📝 ${esc(i.note)}</div>` : ""}</div>`).join("")}${x.note ? `<div class="pod-note">📝 ${esc(x.note)}</div>` : ""}</div>
+        ${x.refund ? `<div class="small neg">คืนเงิน ฿${fmt(x.refund)} — ${esc(x.cancelReason)}</div>` : ""}
+        <div class="pod-acts">${x.status === "paid" && boot.canSell ? `<button class="btn primary" data-oprep="${x.id}">${icon("check")} ${PT("done")}</button>` : ""}${x.status === "prepared" && boot.canSell ? `<button class="btn sm ghost" data-ounprep="${x.id}">${PT("undo")}</button>` : ""}
+          <button class="btn sm" data-oprint="${x.id}">${icon("print")}</button>${x.hasSlip ? `<button class="btn sm" data-oslip="${x.id}">${icon("image")} สลิป</button>` : ""}${["paid", "prepared", "refunded"].includes(x.status) && boot.canSell ? `<button class="btn sm ghost danger-t" data-ocancel="${x.id}">${PT("cancel")}</button>` : ""}</div></div>`; }).join("")
+      : emptyBox(PT("noOrders"), "list");
+    $("[data-oupd]", c).textContent = "อัปเดต " + new Date().toLocaleTimeString("th-TH", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    const act = (id, path, okMsg) => withBtn($(`[data-${path}="${id}"]`, c) || document.createElement("button"), async () => { await bapi("POST", "/pos/orders/" + id + "/" + (path === "oprep" ? "prepared" : "unprepare")); toast(okMsg); draw(); }).catch(() => {});
+    $$("[data-oprep]", c).forEach(b => { b.onclick = () => act(b.dataset.oprep, "oprep", PT("done") + " ✓"); });
+    $$("[data-ounprep]", c).forEach(b => { b.onclick = () => act(b.dataset.ounprep, "ounprep", PT("undo")); });
+    $$("[data-oprint]", c).forEach(b => { b.onclick = () => posReceipt(o.find(x => x.id === b.dataset.oprint), boot); });
+    $$("[data-oslip]", c).forEach(b => { b.onclick = () => lightbox([{ url: authUrl("/pos/orders/" + b.dataset.oslip + "/slip"), name: "สลิป" }], 0); });
+    $$("[data-ocancel]", c).forEach(b => { b.onclick = () => posCancelModal(o.find(x => x.id === b.dataset.ocancel), draw); });
+  };
+  $$("[data-ot]", c).forEach(b => { b.onclick = () => { st.tab = b.dataset.ot; $$("[data-ot]", c).forEach(x => x.classList.toggle("on", x === b)); draw(); }; });
+  $("[data-odate]", c).onchange = e => { st.date = e.target.value || today(); draw(); };
+  bindPosLang(c, () => self.render(c));
+  await draw();
+  S.posTimer = setInterval(() => { if (!$(".modal-bg")) draw(); }, 8000);
+} };
+function posCancelModal(o, after) {
+  const left = r2(o.total - (o.refund || 0));
+  const m = openModal({ title: PT("cancel") + " · " + PT("queue") + " " + esc(o.queueNo), body: `<div class="seg" data-ck style="margin-bottom:12px"><button data-k="all" class="on">ยกเลิกทั้งบิล (คืน ฿${fmt(left)})</button><button data-k="part">คืนเงินบางส่วน</button></div>
+      <label class="field" data-amtw hidden><span>ยอดคืน (ไม่เกิน ฿${fmt(left)})</span><input class="input num" data-camt inputmode="decimal"></label>
+      <label class="field" style="margin-top:10px"><span>เหตุผล <em>*</em></span><input class="input" data-creason placeholder="เช่น ลูกค้ายกเลิก / ของหมด / ทำผิด"></label>
+      <div class="info-box" style="margin-top:10px">รายรับรายวันในบัญชีจะปรับยอดให้อัตโนมัติ</div>`,
+    foot: `<button class="btn" data-close>ปิด</button><button class="btn danger" data-ok>ยืนยัน</button>` });
+  let k = "all";
+  $$("[data-k]", m.el).forEach(b => { b.onclick = () => { k = b.dataset.k; $$("[data-k]", m.el).forEach(x => x.classList.toggle("on", x === b)); $("[data-amtw]", m.el).hidden = k !== "part"; }; });
+  const ok = $("[data-ok]", m.el); ok.onclick = () => withBtn(ok, async () => {
+    const body = { reason: $("[data-creason]", m.el).value.trim() }; if (k === "part") body.amount = $("[data-camt]", m.el).value;
+    await bapi("POST", "/pos/orders/" + o.id + "/cancel", body); m.close(); toast(PT("refundDone")); after();
+  }).catch(() => {});
+}
+/* ---------- เมนู & ตั้งค่า POS (ผู้ดูแล POS) ---------- */
+BRANCH_PAGES.posmenu = { title: () => "เมนู & ตั้งค่า POS", nav: "posmenu", state: { tab: "menu" }, async render(c) {
+  const st = this.state, self = this; const boot = await posBoot(true), ed = boot.canAdmin, cfg = boot.config;
+  const rr = () => self.render(c);
+  c.innerHTML = `<div class="page-head"><div class="grow"><h2>เมนู & ตั้งค่า POS</h2><div class="muted small">ยอดขายจะเข้าเป็น “รายรับ” รายวันแยกตามช่องทางให้อัตโนมัติ</div></div>${ed && st.tab === "menu" ? `<button class="btn primary" data-mnew>${icon("plus")} เพิ่มเมนู</button>` : ""}</div>
+    <div class="tabs"><button data-mt="menu" class="${st.tab === "menu" ? "on" : ""}">เมนู (${boot.menu.length})</button><button data-mt="pay" class="${st.tab === "pay" ? "on" : ""}">รับเงิน & บัญชี</button><button data-mt="display" class="${st.tab === "display" ? "on" : ""}">จอลูกค้า</button><button data-mt="import" class="${st.tab === "import" ? "on" : ""}">นำเข้าจาก POS เดิม</button></div><div data-mb></div>`;
+  $$("[data-mt]", c).forEach(b => { b.onclick = () => { st.tab = b.dataset.mt; rr(); }; });
+  const body = $("[data-mb]", c);
+  if (st.tab === "menu") {
+    const cats = posCats(boot);
+    body.innerHTML = boot.menu.length ? cats.map(cn => { const list = boot.menu.filter(m => (m.category || "อื่นๆ") === cn);
+      return `<div class="q-gh">${esc(cn)} <span>${list.length}</span></div><div class="card pm-list">${list.map(m => `<div class="pm-row ${m.active ? "" : "off"}">${posImg(m) ? `<span class="pm-th" style="background-image:url('${posImg(m)}')"></span>` : `<span class="pm-th ph">${esc(m.name.slice(0, 2))}</span>`}
+        <div class="grow" data-medit="${m.id}" style="cursor:pointer"><div class="bold">${esc(m.name)}${m.active ? "" : ` <span class="chip">ปิดอยู่</span>`}${m.soldout ? ` <span class="chip bad">หมด</span>` : ""}</div>
+          <div class="small muted">฿${m.types.length ? m.types.map(t => esc(t.name) + " " + fmt(t.price).replace(/\.00$/, "")).join(" · ") : fmt(m.price)}${m.addons.length ? " · Add-on " + m.addons.length : ""}${m.dailyLimit != null ? ` · ขายวันนี้ ${m.soldToday}/${m.dailyLimit}` : m.soldToday ? ` · ขายวันนี้ ${m.soldToday}` : ""}</div></div>
+        ${ed ? `<button class="btn sm ${m.soldout ? "primary" : ""}" data-msold="${m.id}">${m.soldout ? "เปิดขาย" : "หมด"}</button><div class="row" style="gap:0"><button class="btn ghost sm icon" data-mup="${m.id}">${icon("up")}</button><button class="btn ghost sm icon" data-mdn="${m.id}">${icon("down")}</button></div>` : ""}</div>`).join("")}</div>`; }).join("")
+      : `<div class="empty-hero">${icon("stock")}<h3 style="margin:8px 0 4px">ยังไม่มีเมนู</h3><div>กด “เพิ่มเมนู” หรือแท็บ “นำเข้าจาก POS เดิม” เพื่อดึงเมนูทั้งหมดมาจากระบบเดิม</div></div>`;
+    if (!ed) return;
+    $("[data-mnew]", c).onclick = () => posMenuModal(null, boot, rr);
+    $$("[data-medit]", c).forEach(b => { b.onclick = () => posMenuModal(boot.menu.find(m => m.id === b.dataset.medit), boot, rr); });
+    $$("[data-msold]", c).forEach(b => { b.onclick = () => withBtn(b, async () => { const m = boot.menu.find(x => x.id === b.dataset.msold); await bapi("PUT", "/pos/menu/" + m.id, { soldout: !m.soldout }); rr(); }).catch(() => {}); });
+    const move = async (id, d) => { const ids = boot.menu.map(m => m.id), i = ids.indexOf(id), j = i + d; if (j < 0 || j >= ids.length) return; [ids[i], ids[j]] = [ids[j], ids[i]]; await bapi("POST", "/pos/menu-order", { ids }); rr(); };
+    $$("[data-mup]", c).forEach(b => { b.onclick = () => move(b.dataset.mup, -1); }); $$("[data-mdn]", c).forEach(b => { b.onclick = () => move(b.dataset.mdn, 1); });
+  } else if (st.tab === "pay") {
+    const incCats = listNames("income_category");
+    body.innerHTML = `<div class="card"><div class="card-h"><h3>บัญชีรับเงิน QR</h3></div><div class="card-b">
+      <div class="seg" data-qm style="margin-bottom:12px">${[["none", "ไม่ใช้ QR"], ["promptpay", "พร้อมเพย์ (เบอร์/เลขบัตร)"], ["merchant", "QR ร้านค้า (ถุงเงิน ฯลฯ)"]].map(([k, l]) => `<button data-q="${k}" class="${cfg.qrMode === k ? "on" : ""}">${l}</button>`).join("")}</div>
+      <div data-qp="promptpay" ${cfg.qrMode === "promptpay" ? "" : "hidden"}><label class="field" style="max-width:360px"><span>เลขพร้อมเพย์</span><input class="input" data-ppid value="${esc(cfg.promptpayId)}" inputmode="numeric" placeholder="เบอร์มือถือ หรือ เลขประจำตัว 13 หลัก"></label></div>
+      <div data-qp="merchant" ${cfg.qrMode === "merchant" ? "" : "hidden"}>${cfg.merchantCode ? `<div class="info-box" style="margin-bottom:10px">ตั้งค่า QR ร้านค้าแล้ว · รหัสร้านค้า <b>${esc(cfg.merchantCode)}</b></div>` : ""}
+        <div class="row wrap"><label class="btn">${icon("upload")} อ่านจากรูป QR ร้านค้า<input type="file" accept="image/*" data-mqimg hidden></label><span class="muted small">หรือใช้แท็บ “นำเข้าจาก POS เดิม” ระบบจะดึง QR ร้านค้ามาให้เอง</span></div>
+        <label class="field" style="margin-top:10px"><span>ข้อมูล QR ร้านค้า (ข้อความ)</span><textarea class="input" rows="2" data-mqtxt placeholder="000201010211...">${""}</textarea><div class="field-hint">ถ้าอ่านจากรูปไม่ได้ในเครื่องนี้ ให้ใช้การนำเข้าจาก POS เดิมแทน</div></label></div>
+      <div class="row" style="margin-top:12px"><button class="btn primary" data-qsave>${icon("check")} บันทึกบัญชีรับเงิน</button>${cfg.qrReady ? `<button class="btn" data-qtest>ทดสอบ QR ฿1</button>` : ""}</div></div></div>
+      <div class="card"><div class="card-h"><h3>ลงบัญชีอัตโนมัติ</h3></div><div class="card-b"><label class="check"><input type="checkbox" data-auto ${cfg.autoIncome ? "checked" : ""}> สร้าง “รายรับ” จากยอดขายทุกวันให้อัตโนมัติ (1 เอกสารต่อวันต่อช่องทาง · ยกเลิก/คืนเงินแล้วยอดปรับเอง)</label>
+        <div class="grid g3" style="margin-top:12px"><label class="field"><span>หมวดรายรับ</span><select class="input" data-icat>${opt("", "อัตโนมัติ (หมวดที่มีคำว่า ขาย/อาหาร)")}${incCats.map(n => opt(n, n, n === cfg.incomeCategory)).join("")}</select></label>
+          <label class="field"><span>ช่องทางเมื่อจ่าย QR</span><select class="input" data-chq>${opt("", "อัตโนมัติ (โอน/พร้อมเพย์)")}${boot.channels.map(n => opt(n, n, n === cfg.chQr)).join("")}</select></label>
+          <label class="field"><span>ช่องทางเมื่อจ่ายเงินสด</span><select class="input" data-chc>${opt("", "อัตโนมัติ (เงินสด)")}${boot.channels.map(n => opt(n, n, n === cfg.chCash)).join("")}</select></label></div>
+        <div class="grid g2"><label class="field"><span>ชื่อร้านบนใบเสร็จ/จอลูกค้า</span><input class="input" data-shop value="${esc(cfg.shopName)}"></label><label class="field"><span>ข้อความท้ายใบเสร็จ</span><input class="input" data-foot value="${esc(cfg.receiptFooter)}"></label></div>
+        <label class="field"><span>ลำดับหมวดเมนู (คั่นด้วย ,)</span><input class="input" data-mcats value="${esc((cfg.menuCats || []).join(", "))}" placeholder="เช่น ข้าวซอย, กับข้าว, เครื่องดื่ม"></label>
+        <button class="btn primary" data-csave>${icon("check")} บันทึก</button></div></div>`;
+    let mode = cfg.qrMode;
+    $$("[data-q]", body).forEach(b => { b.onclick = () => { mode = b.dataset.q; $$("[data-q]", body).forEach(x => x.classList.toggle("on", x === b)); $$("[data-qp]", body).forEach(p => { p.hidden = p.dataset.qp !== mode; }); }; });
+    $("[data-mqimg]", body).onchange = async e => { const f = e.target.files[0]; e.target.value = ""; if (!f) return;
+      if (!("BarcodeDetector" in window)) return toast("เครื่อง/เบราว์เซอร์นี้อ่าน QR จากรูปไม่ได้ — ใช้ Chrome บนคอม/Android หรือใช้การนำเข้าจาก POS เดิม", "bad");
+      try { const bmp = await createImageBitmap(f); const r = await new BarcodeDetector({ formats: ["qr_code"] }).detect(bmp); if (!r.length) throw new Error("อ่าน QR จากรูปนี้ไม่ได้ ลองรูปที่ชัดกว่านี้"); $("[data-mqtxt]", body).value = r[0].rawValue; toast("อ่าน QR แล้ว กดบันทึก"); } catch (er) { toast(er.message, "bad"); } };
+    $("[data-qsave]", body).onclick = e => withBtn(e.currentTarget, async () => { const b2 = { qrMode: mode };
+      if (mode === "promptpay") b2.promptpayId = $("[data-ppid]", body).value; if (mode === "merchant" && $("[data-mqtxt]", body).value.trim()) b2.merchantTemplate = $("[data-mqtxt]", body).value.trim();
+      await bapi("PUT", "/pos/config", b2); toast("บันทึกบัญชีรับเงินแล้ว"); rr(); }).catch(() => {});
+    const qt = $("[data-qtest]", body); if (qt) qt.onclick = async () => { const r = await bapi("POST", "/pos/qr", { amount: 1 }); openModal({ title: "ทดสอบ QR ฿1.00", body: `<div class="pq-box" style="max-width:280px;margin:0 auto">${r.svg}</div><div class="muted small" style="text-align:center;margin-top:8px">สแกนด้วยแอปธนาคาร ต้องขึ้นชื่อร้าน/บัญชีที่ถูกต้อง และยอด 1.00 บาท (ไม่ต้องโอนจริง)</div>`, foot: `<button class="btn primary" data-close>ปิด</button>` }); bapi("POST", "/pos/display", { mode: "idle" }).catch(() => {}); };
+    $("[data-csave]", body).onclick = e => withBtn(e.currentTarget, async () => {
+      await bapi("PUT", "/pos/config", { autoIncome: $("[data-auto]", body).checked, incomeCategory: $("[data-icat]", body).value, chQr: $("[data-chq]", body).value, chCash: $("[data-chc]", body).value,
+        shopName: $("[data-shop]", body).value, receiptFooter: $("[data-foot]", body).value, menuCats: $("[data-mcats]", body).value.split(",").map(s => s.trim()).filter(Boolean) });
+      toast("บันทึกแล้ว"); rr(); }).catch(() => {});
+    if (!ed) $$("button,input,select,textarea", body).forEach(x => { x.disabled = true; });
+  } else if (st.tab === "display") {
+    const url = location.origin + location.pathname + "#/display/" + cfg.displayKey;
+    body.innerHTML = `<div class="card"><div class="card-b"><h3 style="margin-top:0">จอลูกค้า / จอเรียกคิว</h3>
+      <p class="muted">เปิดลิงก์นี้บนแท็บเล็ตหรือทีวีที่หันให้ลูกค้าเห็น (ไม่ต้องล็อกอิน) — แสดงรายการในตะกร้า, QR สำหรับจ่ายเงินตามยอด, เลขคิว และคิวที่ทำเสร็จแล้ว</p>
+      <div class="disp-link"><input class="input" readonly value="${esc(url)}" data-durl><button class="btn" data-dcopy>${icon("copy")} คัดลอก</button><a class="btn primary" href="${esc(url)}" target="_blank" rel="noopener">${icon("external")} เปิด</a></div>
+      ${ed ? `<button class="btn sm ghost danger-t" data-dnew style="margin-top:12px">เปลี่ยนลิงก์ใหม่ (ลิงก์เดิมจะใช้ไม่ได้)</button>` : ""}</div></div>`;
+    $("[data-dcopy]", body).onclick = async () => { try { await navigator.clipboard.writeText(url); toast("คัดลอกลิงก์แล้ว"); } catch (e) { $("[data-durl]", body).select(); } };
+    const dn = $("[data-dnew]", body); if (dn) dn.onclick = async () => { if (!await confirmBox("เปลี่ยนลิงก์จอลูกค้า? จอที่เปิดลิงก์เดิมอยู่จะใช้ไม่ได้", { okText: "เปลี่ยน" })) return; await bapi("PUT", "/pos/config", { newDisplayKey: true }); rr(); };
+  } else {
+    body.innerHTML = `<div class="card"><div class="card-b"><h3 style="margin-top:0">นำเข้าจากระบบ POS เดิม</h3>
+      <p class="muted">ใส่ลิงก์ของระบบ POS เดิม (ที่อยู่บน Railway) ระบบจะดึง <b>เมนูทั้งหมด พร้อมรูป แบบ/ขนาด Add-on</b> และ <b>บัญชี QR รับเงิน (QR ร้านค้า/พร้อมเพย์)</b> มาให้ — เมนูที่ชื่อซ้ำจะข้าม · ไม่ยุ่งกับข้อมูลในระบบเดิม</p>
+      <div class="disp-link"><input class="input" data-iurl placeholder="เช่น pos-restaurant-production.up.railway.app"><button class="btn primary" data-igo ${ed ? "" : "disabled"}>${icon("download")} นำเข้า</button></div></div></div>`;
+    $("[data-igo]", body).onclick = e => withBtn(e.currentTarget, async () => { const r = await bapi("POST", "/pos/import", { url: $("[data-iurl]", body).value });
+      toast("นำเข้าเมนู " + r.added + " รายการ" + (r.skipped ? " (ข้ามชื่อซ้ำ " + r.skipped + ")" : "") + (r.qr ? " + " + r.qr : "")); st.tab = "menu"; rr(); }).catch(() => {});
+  }
+} };
+function posMenuModal(m, boot, after) {
+  const isNew = !m; m = m || { name: "", names: {}, category: "", price: "", types: [], addons: [], dailyLimit: null, soldout: false, active: true, imageV: 0 };
+  const types = m.types.map(x => ({ ...x })), addons = m.addons.map(x => ({ ...x }));
+  const cats = [...new Set(posCats(boot).concat(boot.config.menuCats || []))];
+  const md = openModal({ title: isNew ? "เพิ่มเมนู" : "แก้ไขเมนู · " + esc(m.name), size: "lg", body: `<div class="grid g2">
+      <label class="field"><span>ชื่อเมนู <em>*</em></span><input class="input" name="name" value="${esc(m.name)}" placeholder="เช่น ข้าวซอยไก่"></label>
+      <label class="field"><span>หมวด</span><input class="input" name="category" value="${esc(m.category)}" list="pos-cats" placeholder="เช่น ข้าวซอย"><datalist id="pos-cats">${cats.map(n => opt(n)).join("")}</datalist></label>
+      <label class="field"><span>ราคา (บาท) <em>*</em></span><input class="input num" name="price" inputmode="decimal" value="${m.price === "" ? "" : m.price}"><div class="field-hint">ถ้ามีหลายแบบ/ขนาด ใช้ราคาในตารางด้านล่าง</div></label>
+      <label class="field"><span>จำนวนที่ขายได้ต่อวัน (ไม่บังคับ)</span><input class="input num" name="dailyLimit" inputmode="numeric" value="${m.dailyLimit == null ? "" : m.dailyLimit}" placeholder="ไม่จำกัด"></label></div>
+    <div style="margin-top:12px">${photoBox(m.imageV ? posImg(m) : "", "รูปเมนู", false, 700)}</div>
+    <div class="section-t" style="margin-top:16px">แบบ / ขนาด (ไม่บังคับ) <span class="muted small">เช่น ธรรมดา 60 · พิเศษ 80</span></div><div data-trows></div><button type="button" class="btn sm" data-tadd>${icon("plus")} เพิ่มแบบ</button>
+    <div class="section-t" style="margin-top:16px">Add-on (ไม่บังคับ) <span class="muted small">เช่น ไข่ต้ม +10</span></div><div data-arows></div><button type="button" class="btn sm" data-aadd>${icon("plus")} เพิ่ม Add-on</button>
+    <details style="margin-top:16px"><summary class="bold" style="cursor:pointer">ชื่อภาษาอื่น (ให้พนักงาน/ลูกค้าต่างชาติอ่าน)</summary><div class="grid g3" style="margin-top:8px">
+      <label class="field"><span>English</span><input class="input" name="n_en" value="${esc(m.names.en || "")}"></label><label class="field"><span>မြန်မာ</span><input class="input" name="n_my" value="${esc(m.names.my || "")}"></label><label class="field"><span>ລາວ</span><input class="input" name="n_lo" value="${esc(m.names.lo || "")}"></label></div></details>
+    <div class="row wrap" style="margin-top:14px"><label class="check"><input type="checkbox" name="active" ${m.active ? "checked" : ""}> เปิดขาย (แสดงในหน้าขาย)</label><label class="check"><input type="checkbox" name="soldout" ${m.soldout ? "checked" : ""}> หมดชั่วคราว</label></div>`,
+    foot: `${isNew ? "" : `<div class="left"><button class="btn danger" data-mdel>${icon("trash")} ลบ</button></div>`}<button class="btn" data-close>ยกเลิก</button><button class="btn primary" data-msave>${icon("check")} บันทึก</button>` });
+  const el = md.el, getImg = bindPhotoBox(el);
+  const rows = (arr, sel, ph) => { const w = $(sel, el); w.innerHTML = arr.map((x, i) => `<div class="u-row"><input class="input sm" data-n="${i}" value="${esc(x.name)}" placeholder="${ph}"><span>฿</span><input class="input sm num" data-p="${i}" value="${x.price}" inputmode="decimal"><button type="button" class="btn ghost sm icon" data-r="${i}">${icon("trash")}</button></div>`).join("");
+    $$("[data-n]", w).forEach(x => { x.oninput = () => { arr[+x.dataset.n].name = x.value; }; }); $$("[data-p]", w).forEach(x => { x.oninput = () => { arr[+x.dataset.p].price = x.value; }; });
+    $$("[data-r]", w).forEach(x => { x.onclick = () => { arr.splice(+x.dataset.r, 1); rows(arr, sel, ph); }; }); };
+  rows(types, "[data-trows]", "เช่น พิเศษ"); rows(addons, "[data-arows]", "เช่น ไข่ต้ม");
+  $("[data-tadd]", el).onclick = () => { types.push({ name: types.length ? "" : "ธรรมดา", price: $("[name=price]", el).value || "" }); rows(types, "[data-trows]", "เช่น พิเศษ"); };
+  $("[data-aadd]", el).onclick = () => { addons.push({ name: "", price: "" }); rows(addons, "[data-arows]", "เช่น ไข่ต้ม"); };
+  const sv = $("[data-msave]", el); sv.onclick = () => withBtn(sv, async () => { const f = formData(el);
+    const b = { name: f.name, category: f.category, price: types.length && f.price === "" ? Math.min(...types.map(t => num(t.price))) : f.price, dailyLimit: f.dailyLimit, active: $("[name=active]", el).checked, soldout: $("[name=soldout]", el).checked,
+      types: types.filter(t => String(t.name).trim()).map(t => ({ name: t.name, price: num(t.price) })), addons: addons.filter(t => String(t.name).trim()).map(t => ({ name: t.name, price: num(t.price) })), names: { en: f.n_en, my: f.n_my, lo: f.n_lo } };
+    const im = getImg(); if (im !== undefined) b.image = im;
+    if (isNew) await bapi("POST", "/pos/menu", b); else await bapi("PUT", "/pos/menu/" + m.id, b);
+    md.close(); toast("บันทึกเมนูแล้ว"); after(); }).catch(() => {});
+  const dl = $("[data-mdel]", el); if (dl) dl.onclick = async () => { if (!await confirmBox("ลบเมนู “" + esc(m.name) + "”? (ออเดอร์เก่ายังอยู่)", { danger: true, okText: "ลบ" })) return; await bapi("DELETE", "/pos/menu/" + m.id); md.close(); toast("ลบแล้ว"); after(); };
+}
+/* ---------- รายงานขาย ---------- */
+BRANCH_PAGES.posreport = { title: () => "รายงานขาย POS", nav: "posreport", async render(c) {
+  c.innerHTML = `<div class="page-head"><div class="grow"><h2>รายงานขาย POS</h2><div class="muted small">ไม่นับบิลที่ยกเลิก · หักยอดคืนเงินแล้ว</div></div>${rangeBar()}</div><div data-rb><div class="muted">กำลังโหลด…</div></div>`;
+  bindRange(c, () => BRANCH_PAGES.posreport.render(c));
+  const r = await bapi("GET", "/pos/report?" + rq());
+  $("[data-rb]", c).innerHTML = `<div class="kpis"><div class="card kpi"><div class="lbl"><i style="background:var(--income)"></i>ยอดขายสุทธิ</div><div class="val">${baht(r.net)}</div><div class="sub">ก่อนคืนเงิน ${baht(r.gross)}${r.refunds ? " · คืน " + baht(r.refunds) : ""}</div></div>
+      <div class="card kpi"><div class="lbl"><i style="background:var(--primary)"></i>จำนวนบิล</div><div class="val">${r.bills.toLocaleString()}</div><div class="sub">เฉลี่ย ${baht(r.avgBill)} / บิล</div></div>
+      <div class="card kpi"><div class="lbl"><i style="background:var(--bad)"></i>ยกเลิก</div><div class="val">${r.cancelled.bills}</div><div class="sub">${baht(r.cancelled.total)}</div></div></div>
+    ${r.days.length > 1 ? `<div class="card"><div class="card-h"><h3>ยอดขายรายวัน</h3></div><div class="card-b"><div data-rch></div></div></div>` : ""}
+    <div class="dash-grid even"><div class="card"><div class="card-h"><h3>เมนูขายดี</h3></div><div class="card-b"><table class="tbl"><thead><tr><th>เมนู</th><th class="num">จำนวน</th><th class="num">ยอดขาย</th></tr></thead><tbody>${r.menus.slice(0, 30).map(m => `<tr><td>${esc(m.name)}</td><td class="num">${m.qty}</td><td class="num">${fmt(m.total)}</td></tr>`).join("") || `<tr><td colspan="3" class="muted">ยังไม่มีข้อมูล</td></tr>`}</tbody></table></div></div>
+      <div class="card"><div class="card-h"><h3>ตามช่องทางรับเงิน</h3></div><div class="card-b">${hbars(r.channels, "#257de0")}</div><div class="card-h"><h3>ตามช่วงเวลา</h3></div><div class="card-b">${hbars(r.hours.map(h => ({ name: String(h.hour).padStart(2, "0") + ":00", total: h.total })), "#f47230")}</div></div></div>`;
+  const ch = $("[data-rch]", c); if (ch) barChart(ch, r.days.map(d => ({ ...d, key: d.date, income: d.total })), [{ k: "income", label: "ยอดขาย", color: "#257de0" }], d => thDate(d.key, true).replace(/\s\d+$/, ""), d => thDate(d.key));
+} };
+/* ---------- จอลูกค้า (ไม่ต้องล็อกอิน) ---------- */
+async function renderDisplay(key) {
+  const app = $("#app"); document.title = "จอลูกค้า";
+  app.innerHTML = `<div class="disp" data-disp><div class="muted" style="margin:auto">กำลังเชื่อมต่อ…</div></div>`;
+  let last = "";
+  const tick = async () => {
+    if (location.hash.indexOf("#/display/") !== 0) { clearInterval(S.dispTimer); S.dispTimer = null; return; }
+    let d; try { d = await api("GET", "/api/pos-display/" + encodeURIComponent(key), null, { noRedirect: true }); } catch (e) { $("[data-disp]").innerHTML = `<div class="disp-err">${esc(e.message)}</div>`; return; }
+    const sig = JSON.stringify([d.state, d.queue, d.shop]); if (sig === last) return; last = sig;
+    const s = d.state, q = d.queue;
+    const board = `<div class="disp-board"><div class="db-col ready"><div class="db-h">✅ เสร็จแล้ว รับได้เลย<br><small>Ready · ပြီးပါပြီ · ແລ້ວ</small></div><div class="db-nums">${q.ready.map(n => `<span>${esc(n)}</span>`).join("") || `<em>—</em>`}</div></div>
+      <div class="db-col wait"><div class="db-h">⏳ กำลังทำ<br><small>Preparing · ချက်နေသည် · ກຳລັງເຮັດ</small></div><div class="db-nums">${q.waiting.map(n => `<span>${esc(n)}</span>`).join("") || `<em>—</em>`}</div></div></div>`;
+    const head = `<div class="disp-head">${d.logo ? `<img src="${esc(d.logo)}">` : ""}<b>${esc(d.shop)}</b></div>`;
+    let main;
+    if (s.mode === "pay") main = `<div class="disp-pay"><div class="dp-t">สแกนเพื่อชำระเงิน · Scan to pay</div><div class="dp-qr">${s.svg}</div><div class="dp-amt">฿${fmt(s.amount)}</div></div>`;
+    else if (s.mode === "cart") main = `<div class="disp-cart"><div class="dc-list">${s.items.map(i => `<div class="dc-row"><span>${i.qty}× ${esc(i.name)}</span><b>${fmt(i.total)}</b></div>`).join("")}</div><div class="dc-tot"><span>รวม Total</span><b>฿${fmt(s.amount)}</b></div></div>`;
+    else if (s.mode === "done") main = `<div class="disp-done"><div>ขอบคุณค่ะ · Thank you</div><div class="dd-l">เลขคิวของคุณ · Your queue</div><div class="dd-q">${esc(s.queueNo)}</div>${s.change != null ? `<div class="dd-c">เงินทอน ฿${fmt(s.change)}</div>` : ""}</div>`;
+    else main = "";
+    $("[data-disp]").innerHTML = head + (main ? `<div class="disp-body"><div class="disp-main">${main}</div>${board}</div>` : `<div class="disp-body idle">${board}</div>`);
+  };
+  clearInterval(S.dispTimer); await tick(); S.dispTimer = setInterval(tick, 1500);
+}
+/* ===================== ธุรกิจ (v2.9) — แยกบัญชีธุรกิจอื่นที่ไม่เกี่ยวข้องกัน ===================== */
+const curBiz = () => (S.bizList || []).find(z => z.id === S.biz) || (S.bizList || [])[0] || null;
+const bizBranches = br => br.filter(b => !S.biz || !b.businessId || b.businessId === S.biz);
+const bizLogo = (z, sz) => z && z.logo ? `<img class="biz-logo" src="${esc(z.logo)}" style="width:${sz}px;height:${sz}px" alt="">` : `<span class="biz-logo ini" style="width:${sz}px;height:${sz}px">${esc(initials(z ? z.name : ""))}</span>`;
+ADMIN_PAGES.businesses = { title: "ธุรกิจ", async render(c) {
+  const list = (await api("GET", "/api/admin/businesses")).businesses; S.bizList = list;
+  c.innerHTML = `<div class="page-head"><div class="grow"><h2>ธุรกิจ</h2><div class="muted small">แต่ละธุรกิจมีชื่อ โลโก้ หมวดหมู่ สาขา รายงาน แยกกันทั้งหมด ตัวเลขไม่ปนกัน — ใช้ทำบัญชีธุรกิจอื่นได้ (เช่น ร้านกาแฟ ร้านค้า บริการ)</div></div><button class="btn primary" data-new>${icon("plus")} เพิ่มธุรกิจ</button></div>
+    <div class="biz-grid">${list.map(z => `<div class="card biz-card ${z.id === S.biz ? "on" : ""}"><div class="row">${bizLogo(z, 52)}<div class="grow"><div class="bold" style="font-size:16px">${esc(z.name)}</div><div class="muted small">${z.branchCount} สาขา${z.kind ? " · " + esc(z.kind) : ""}${z.taxId ? " · " + esc(z.taxId) : ""}</div></div></div>
+      <div class="row wrap" style="margin-top:12px">${z.id === S.biz ? `<span class="chip good">กำลังใช้งาน</span>` : `<button class="btn sm primary" data-use="${z.id}">สลับมาธุรกิจนี้</button>`}<button class="btn sm" data-edit="${z.id}">${icon("edit")} แก้ไข</button>${!z.branchCount && list.length > 1 ? `<button class="btn sm ghost danger-t" data-del="${z.id}">ลบ</button>` : ""}</div></div>`).join("")}</div>`;
+  const rr = () => ADMIN_PAGES.businesses.render(c);
+  $("[data-new]", c).onclick = () => bizModal(null, rr);
+  $$("[data-edit]", c).forEach(b => { b.onclick = () => bizModal(list.find(z => z.id === b.dataset.edit), rr); });
+  $$("[data-use]", c).forEach(b => { b.onclick = () => { setBiz(b.dataset.use); render(); }; });
+  $$("[data-del]", c).forEach(b => { b.onclick = async () => { const z = list.find(x => x.id === b.dataset.del); if (!await confirmBox("ลบธุรกิจ “" + esc(z.name) + "”?", { danger: true, okText: "ลบ" })) return;
+    try { await api("DELETE", "/api/admin/businesses/" + z.id); toast("ลบแล้ว"); if (S.biz === z.id) setBiz(""); rr(); } catch (e) { toast(e.message, "bad"); } }; });
+} };
+function setBiz(id) { S.biz = id; try { localStorage.setItem("biz", id); } catch (e) {} }
+function bizModal(z, after) {
+  const isNew = !z; z = z || { name: "", kind: "", taxId: "", phone: "", address: "", logo: "" };
+  const m = openModal({ title: isNew ? "เพิ่มธุรกิจใหม่" : "แก้ไขธุรกิจ · " + esc(z.name), body: `<div class="grid g2">
+    <label class="field"><span>ชื่อธุรกิจ / บริษัท <em>*</em></span><input class="input" name="name" value="${esc(z.name)}" placeholder="เช่น ร้านกาแฟ ณ เหนือ"></label>
+    <label class="field"><span>ประเภทธุรกิจ</span><input class="input" name="kind" value="${esc(z.kind)}" list="biz-kinds" placeholder="เช่น ร้านอาหาร"><datalist id="biz-kinds">${["ร้านอาหาร", "ร้านกาแฟ", "ร้านค้าปลีก", "บริการ", "ที่พัก", "อื่นๆ"].map(n => opt(n)).join("")}</datalist></label>
+    <label class="field"><span>เลขประจำตัวผู้เสียภาษี</span><input class="input" name="taxId" value="${esc(z.taxId)}"></label><label class="field"><span>เบอร์โทร</span><input class="input" name="phone" value="${esc(z.phone)}"></label></div>
+    <label class="field" style="margin-top:14px"><span>ที่อยู่ (แสดงบนเอกสาร)</span><textarea class="input" name="address" rows="2">${esc(z.address)}</textarea></label>
+    <div style="margin-top:14px">${photoBox(z.logo || "", "โลโก้ธุรกิจ (แสดงบนหน้าแรกและเอกสาร)", false, 400)}</div>
+    ${isNew ? `<div class="info-box" style="margin-top:14px">ธุรกิจใหม่จะเริ่มด้วยหมวดหมู่มาตรฐาน และไม่ใช้ข้อมูลร่วมกับธุรกิจอื่น · สร้างแล้วไปที่ “จัดการสาขา” เพื่อเพิ่มสาขาแรก</div>` : ""}`,
+    foot: `<button class="btn" data-close>ยกเลิก</button><button class="btn primary" data-save>${icon("check")} ${isNew ? "สร้างธุรกิจ" : "บันทึก"}</button>` });
+  const getLogo = bindPhotoBox(m.el), sv = $("[data-save]", m.el);
+  sv.onclick = () => withBtn(sv, async () => { const f = formData(m.el); const lg = getLogo(); if (lg !== undefined) f.logo = lg;
+    if (isNew) { const r = await api("POST", "/api/admin/businesses", f); setBiz(r.id); toast("สร้างธุรกิจแล้ว — เพิ่มสาขาแรกได้ที่ “จัดการสาขา”"); } else { await api("PUT", "/api/admin/businesses/" + z.id, f); toast("บันทึกแล้ว"); }
+    S.info = null; m.close(); after(); }).catch(() => {});
+}
 ADMIN_PAGES.overview = { title: "ภาพรวมทุกสาขา", async render(c) {
   c.innerHTML = `<div class="page-head"><div class="grow"><h2>ภาพรวมทุกสาขา</h2><div class="muted small">เปรียบเทียบผลการดำเนินงานของแต่ละสาขา</div></div>${rangeBar()}</div><div data-body><div class="boot" style="height:300px"><div class="spinner"></div></div></div>`;
   bindRange(c, () => ADMIN_PAGES.overview.render(c));
-  const o = await api("GET", "/api/admin/overview?" + rq());
+  const o = await api("GET", "/api/admin/overview?" + rq() + "&biz=" + encodeURIComponent(S.biz || ""));
   const t = o.totals;
   $("[data-body]", c).innerHTML = !o.branches.length ? `<div class="empty-hero">${icon("building")}<h3 style="margin:8px 0 4px">ยังไม่มีสาขา</h3><div>สร้างสาขาแรก แล้วระบบจะสร้างบัญชี สต็อก และเงินเดือนแยกให้สาขานั้นอัตโนมัติ</div><div style="margin-top:16px"><a class="btn primary" href="#/admin/branches">${icon("plus")} สร้างสาขา</a></div></div>` : `
     <div class="kpis"><div class="card kpi"><div class="lbl"><i style="background:var(--income)"></i>รายรับรวมทุกสาขา</div><div class="val">${baht(t.income)}</div><div class="sub">${o.branches.length} สาขา</div></div>
       <div class="card kpi"><div class="lbl"><i style="background:var(--expense)"></i>รายจ่ายรวม</div><div class="val">${baht(t.expense)}</div><div class="sub">งบลงทุน ${baht(t.invest)}</div></div>
-      <div class="card kpi"><div class="lbl"><i style="background:${t.net >= 0 ? "var(--good)" : "var(--bad)"}"></i>กำไร (ขาดทุน) สุทธิ</div><div class="val ${t.net < 0 ? "neg" : ""}">${baht(t.net)}</div><div class="sub">อัตรากำไร ${t.income ? Math.round(t.net / t.income * 1000) / 10 : 0}%</div></div>
+      <div class="card kpi"><div class="lbl"><i style="background:${t.net >= 0 ? "var(--good)" : "var(--bad)"}"></i>กำไร (ขาดทุน) สุทธิ <span class="muted small">รวมสต็อก</span></div><div class="val ${t.net < 0 ? "neg" : ""}">${baht(t.net)}</div><div class="sub">รับ−จ่าย ${baht(t.cashNet)} · สต็อก ${t.stockAdj >= 0 ? "+" : ""}${baht(t.stockAdj)} · อัตรากำไร ${t.income ? Math.round(t.net / t.income * 1000) / 10 : 0}%</div></div>
       <div class="card kpi"><div class="lbl"><i style="background:var(--invest)"></i>มูลค่าสต็อกรวม</div><div class="val">${baht(t.stockValue)}</div><div class="sub">พนักงาน ${t.employees} คน</div></div></div>
     <div class="card" style="margin-bottom:14px"><div class="card-h"><h3 class="grow">เปรียบเทียบรายสาขา</h3><div class="legend"><span><i style="background:#257de0"></i>รายรับ</span><span><i style="background:#f47230"></i>รายจ่าย</span></div></div><div class="card-b" data-chart></div></div>
     <div class="card"><div class="tbl-wrap"><table class="tbl"><thead><tr><th>สาขา</th><th class="num">รายรับ</th><th class="num">รายจ่าย</th><th class="num">กำไรสุทธิ</th><th class="num">ค้างจ่าย</th><th class="num">มูลค่าสต็อก</th><th class="num">พนักงาน</th><th></th></tr></thead><tbody>
@@ -2306,7 +2865,7 @@ const COLORS = ["#1f6feb", "#0f8a4a", "#f47230", "#6a4ce2", "#d92d20", "#0891b2"
 ADMIN_PAGES.branches = { title: "จัดการสาขา", async render(c) {
   const self = this;
   c.innerHTML = `<div class="page-head"><div class="grow"><h2>สาขาทั้งหมด</h2><div class="muted small">เมื่อสร้างสาขาใหม่ ระบบจะสร้างบัญชี สต็อก และระบบเงินเดือนของสาขานั้นแยกให้ทันที</div></div><button class="btn primary" data-new>${icon("plus")} สร้างสาขาใหม่</button></div><div class="card"><div class="tbl-wrap" data-tbl><div class="boot" style="height:160px"><div class="spinner"></div></div></div></div>`;
-  const br = (await api("GET", "/api/admin/branches")).branches;
+  const br = bizBranches((await api("GET", "/api/admin/branches")).branches);
   $("[data-new]", c).onclick = () => branchModal(null, br, () => self.render(c));
   $("[data-tbl]", c).innerHTML = br.length ? `<table class="tbl"><thead><tr><th></th><th>สาขา</th><th>ติดต่อ</th><th>สถานะ</th><th>เข้าใช้ล่าสุด</th><th>เปลี่ยนรหัสล่าสุด</th><th></th></tr></thead><tbody>
     ${br.map((b, i) => `<tr><td style="width:64px"><div class="row" style="gap:0"><button class="btn ghost sm icon" data-up="${i}" ${i ? "" : "disabled"}>${icon("up")}</button><button class="btn ghost sm icon" data-dn="${i}" ${i < br.length - 1 ? "" : "disabled"}>${icon("down")}</button></div></td>
@@ -2351,10 +2910,12 @@ function branchModal(b, all, after) {
   const m = openModal({ title: isNew ? "สร้างสาขาใหม่" : "แก้ไขสาขา · " + esc(b.name), size: "lg", body: `<div class="grid g2">
     <label class="field"><span>ชื่อสาขา <em>*</em></span><input class="input" name="name" value="${esc(b.name)}" placeholder="เช่น สาขาสยาม"></label>
     <label class="field"><span>รหัสสาขา (ย่อ)</span><input class="input" name="code" value="${esc(b.code)}" maxlength="6" placeholder="เช่น SY, 01"></label>
+    ${(S.bizList || []).length > 1 ? `<label class="field" style="grid-column:1/-1"><span>อยู่ในธุรกิจ</span><select class="input" name="businessId">${S.bizList.map(z => opt(z.id, z.name, z.id === (b.businessId || S.biz))).join("")}</select>${!isNew ? `<div class="field-hint">ย้ายธุรกิจ = ข้อมูลของสาขานี้ไปรวมในรายงานของธุรกิจใหม่</div>` : ""}</label>` : ""}
     <label class="field"><span>เบอร์โทร</span><input class="input" name="phone" value="${esc(b.phone)}"></label>
     <label class="field"><span>เลขประจำตัวผู้เสียภาษี (ถ้าแยกจากบริษัท)</span><input class="input" name="taxId" value="${esc(b.taxId)}"></label></div>
     <label class="field" style="margin-top:14px"><span>ที่อยู่</span><textarea class="input" name="address" rows="2">${esc(b.address)}</textarea></label>
     <div style="margin-top:14px">${photoBox(b.logo || "", "รูปโปรไฟล์ / โลโก้สาขา (แสดงแทนรหัสสาขา)", false, 320)}</div>
+    <label class="check pos-toggle" style="margin-top:14px"><input type="checkbox" name="posEnabled" ${b.posEnabled ? "checked" : ""}> <span><b>เปิดใช้ระบบ POS ขายหน้าร้าน</b><br><span class="muted small">มีเมนูขายหน้าร้าน ออเดอร์/คิว จอลูกค้า · ยอดขายเข้ารายรับรายวันอัตโนมัติ</span></span></label>
     <div class="field" style="margin-top:14px"><span class="small" style="display:block;margin-bottom:6px;color:var(--text-2);font-weight:500">สีประจำสาขา</span><div class="color-pick">${COLORS.map(x => `<button type="button" data-color="${x}" class="${x === b.color ? "on" : ""}" style="background:${x}"></button>`).join("")}</div></div>
     ${isNew ? `<div class="section-t" style="margin-top:18px">รหัสผ่านเข้าสาขา</div><div class="grid g2"><label class="field"><span>รหัสผ่าน (อย่างน้อย 6 ตัว) <em>*</em></span>${pwInput("password", "", "new-password")}</label><label class="field"><span>ยืนยันรหัสผ่าน <em>*</em></span>${pwInput("confirm", "", "new-password")}</label></div>
       <label class="field" style="margin-top:14px"><span>หมวด / ช่องทาง / หน่วยนับเริ่มต้น</span><select class="input" name="copyFrom">${opt("", "ใช้ค่าเริ่มต้นของระบบ (ร้านอาหาร)", !all.length)}${all.map((x, i) => opt(x.id, "คัดลอกจาก " + x.name, i === 0)).join("")}</select></label>` : ""}
@@ -2364,7 +2925,7 @@ function branchModal(b, all, after) {
   let color = b.color;
   $$("[data-color]", m.el).forEach(x => { x.onclick = () => { color = x.dataset.color; $$("[data-color]", m.el).forEach(y => y.classList.toggle("on", y === x)); }; });
   const sv = $("[data-save]", m.el);
-  sv.onclick = () => withBtn(sv, async () => { const f = formData(m.el); f.color = color; const lg = getLogo(); if (lg !== undefined) f.logo = lg;
+  sv.onclick = () => withBtn(sv, async () => { const f = formData(m.el); f.color = color; f.posEnabled = $("[name=posEnabled]", m.el).checked; const lg = getLogo(); if (lg !== undefined) f.logo = lg;
     if (isNew) { if (f.password !== f.confirm) throw new Error("ยืนยันรหัสผ่านไม่ตรงกัน"); await api("POST", "/api/admin/branches", f); } else await api("PUT", "/api/admin/branches/" + b.id, f);
     m.close(); toast(isNew ? "สร้างสาขา " + f.name + " แล้ว" : "บันทึกแล้ว"); after(); }).catch(() => {});
   const tg = $("[data-toggle]", m.el); if (tg) tg.onclick = async () => { await api("PUT", "/api/admin/branches/" + b.id, { active: !b.active }); m.close(); toast("อัปเดตสถานะสาขาแล้ว"); after(); };
@@ -2376,11 +2937,11 @@ function branchModal(b, all, after) {
     const ok = $("[data-ok]", d.el); ok.onclick = () => withBtn(ok, async () => { await api("DELETE", "/api/admin/branches/" + b.id, formData(d.el)); delete S.branchTokens[b.id]; saveBT(); d.close(); toast("ลบสาขาแล้ว"); after(); }).catch(() => {}); };
 }
 ADMIN_PAGES.lists = { title: "หมวด & ช่องทาง", state: { kind: "expense_category", bid: "" }, async render(c) {
-  const br = (await api("GET", "/api/admin/branches")).branches; const st = this.state;
-  if (!br.length) { c.innerHTML = emptyBox("ยังไม่มีสาขา", "building"); return; }
+  const br = bizBranches((await api("GET", "/api/admin/branches")).branches); const st = this.state;
+  if (!br.length) { c.innerHTML = emptyBox("ธุรกิจนี้ยังไม่มีสาขา", "building"); return; }
   if (!br.some(b => b.id === st.bid)) st.bid = br[0].id;
   const synced = (await api("GET", "/api/admin/settings")).settings.lists_sync_all === "1";
-  c.innerHTML = `<div class="page-head"><div class="grow"><h2>หมวด & ช่องทาง</h2><div class="muted small">${synced ? "โหมด <b>ใช้ร่วมกันทุกสาขา</b> — แก้ที่สาขาไหนก็มีผลทุกสาขา" : "โหมดแยกสาขา — แต่ละสาขาตั้งหมวดของตัวเอง"} · เปลี่ยนโหมดได้ที่ ตั้งค่าบริษัท & ระบบ</div></div>
+  c.innerHTML = `<div class="page-head"><div class="grow"><h2>หมวด & ช่องทาง</h2><div class="muted small">${synced ? "โหมด <b>ใช้ร่วมกันทุกสาขา (ในธุรกิจเดียวกัน)</b> — แก้ที่สาขาไหนก็มีผลทุกสาขา" : "โหมดแยกสาขา — แต่ละสาขาตั้งหมวดของตัวเอง"} · เปลี่ยนโหมดได้ที่ ตั้งค่าบริษัท & ระบบ</div></div>
     <label class="row"><span class="muted small">สาขา</span><select class="input" style="width:220px" data-bid>${br.map(b => opt(b.id, b.name, b.id === st.bid)).join("")}</select></label>
     ${br.length > 1 ? `<button class="btn" data-copystock>${icon("stock")} คัดลอกสินค้าสต็อก</button><button class="btn primary" data-copy>${icon("copy")} คัดลอกจากสาขาหนึ่งไปสาขาอื่น</button>` : ""}</div><div data-ed></div>`;
   $("[data-bid]", c).onchange = e => { st.bid = e.target.value; ADMIN_PAGES.lists.render(c); };
@@ -2459,10 +3020,12 @@ function copyListsModal(br, fromId, after) {
   }).catch(() => {});
 }
 ADMIN_PAGES.settings = { title: "ตั้งค่าบริษัท & ระบบ", async render(c) {
-  const s = (await api("GET", "/api/admin/settings")).settings; let logo = s.company_logo || "";
+  const s = (await api("GET", "/api/admin/settings")).settings;
+  const bz = curBiz(); if (bz) Object.assign(s, { company_name: bz.name, company_tax_id: bz.taxId, company_phone: bz.phone, company_address: bz.address, company_logo: bz.logo });
+  let logo = s.company_logo || "";
   const inp = (k, l, h, t) => `<label class="field"><span>${l}</span><input class="input ${t === "num" ? "num" : ""}" name="${k}" value="${esc(s[k])}" ${t === "num" ? 'inputmode="decimal"' : ""}>${h ? `<div class="field-hint">${h}</div>` : ""}</label>`;
   c.innerHTML = `<div class="page-head"><div class="grow"><h2>ตั้งค่าบริษัท & ระบบ</h2></div><button class="btn primary" data-save>${icon("check")} บันทึกการตั้งค่า</button></div><form data-f class="stack" style="max-width:900px">
-    <div class="card"><div class="card-h"><h3>ข้อมูลบริษัท / ร้าน</h3></div><div class="card-b"><div class="row" style="gap:16px;align-items:flex-start;margin-bottom:14px"><div class="brand-logo" style="width:64px;height:64px;font-size:22px" data-logo>${logo ? `<img src="${esc(logo)}">` : esc(initials(s.company_name))}</div>
+    <div class="card"><div class="card-h"><h3>ข้อมูลบริษัท / ร้าน${(S.bizList || []).length > 1 ? ` <span class="chip blue">ธุรกิจ: ${esc(bz.name)}</span>` : ""}</h3></div><div class="card-b"><div class="row" style="gap:16px;align-items:flex-start;margin-bottom:14px"><div class="brand-logo" style="width:64px;height:64px;font-size:22px" data-logo>${logo ? `<img src="${esc(logo)}">` : esc(initials(s.company_name))}</div>
       <div><div class="bold">โลโก้</div><div class="muted small" style="margin-bottom:8px">แสดงบนหน้าแรก เอกสาร และสลิปเงินเดือน (ไม่เกิน 1MB)</div><div class="row"><button type="button" class="btn sm" data-up>อัปโหลดโลโก้</button><button type="button" class="btn sm ghost" data-rm>ลบโลโก้</button><input type="file" accept="image/*" hidden data-file></div></div></div>
       <div class="grid g2">${inp("company_name", "ชื่อบริษัท / ร้าน")}${inp("company_tax_id", "เลขประจำตัวผู้เสียภาษี")}${inp("company_phone", "เบอร์โทร")}</div><label class="field" style="margin-top:14px"><span>ที่อยู่</span><textarea class="input" name="company_address" rows="2">${esc(s.company_address)}</textarea></label></div></div>
     <div class="card"><div class="card-h"><h3>หมวด & ช่องทาง ของสาขา</h3></div><div class="card-b"><label class="field" style="max-width:520px"><span>การใช้หมวดหมู่ / ช่องทาง / ผู้ขาย / หน่วยนับ</span><select class="input" name="lists_sync_all">${opt("1", "ใช้ร่วมกันทุกสาขา (เพิ่ม/แก้/ลบ ที่ไหนก็มีผลทุกสาขา)", s.lists_sync_all === "1")}${opt("0", "แยกแต่ละสาขา", s.lists_sync_all !== "1")}</select>
@@ -2474,7 +3037,9 @@ ADMIN_PAGES.settings = { title: "ตั้งค่าบริษัท & ร�
   $("[data-file]", c).onchange = async e => { const f = e.target.files[0]; if (!f) return; const x = await fileToB64(f, 512); logo = x.url.startsWith("data:") ? x.url : "data:" + x.mime + ";base64," + x.data; $("[data-logo]", c).innerHTML = `<img src="${logo}">`; };
   $("[data-rm]", c).onclick = () => { logo = ""; $("[data-logo]", c).textContent = initials(s.company_name); };
   const sv = $("[data-save]", c);
-  sv.onclick = () => withBtn(sv, async () => { const f = formData($("[data-f]", c)); f.company_logo = logo; await api("PUT", "/api/admin/settings", f); S.info = null; toast("บันทึกการตั้งค่าแล้ว"); }).catch(() => {});
+  sv.onclick = () => withBtn(sv, async () => { const f = formData($("[data-f]", c)); f.company_logo = logo;
+    if (bz) await api("PUT", "/api/admin/businesses/" + bz.id, { name: f.company_name, taxId: f.company_tax_id, phone: f.company_phone, address: f.company_address, kind: bz.kind, logo });
+    await api("PUT", "/api/admin/settings", f); S.info = null; toast("บันทึกการตั้งค่าแล้ว"); render(); }).catch(() => {});
 } };
 ADMIN_PAGES.admins = { title: "ผู้ดูแลระบบ", async render(c) {
   const self = this; const ad = (await api("GET", "/api/admin/admins")).admins;
@@ -2513,6 +3078,7 @@ const PERM_PRESETS = {
   owner: ["ผู้จัดการ / เจ้าของ (ทุกเมนู + อนุมัติทั้งหมด)", m => Object.fromEntries(m.map(x => [x.key, "edit"])), { s: 1, l: 1, a: 1 }],
   account: ["พนักงานบัญชี", () => ({ dashboard: "view", income: "edit", expense: "edit", invest: "edit", ledger: "view", accounts: "edit", statements: "view", cards: "edit", stock: "view", settings: "view" }), {}],
   stock: ["พนักงานร้าน (สต็อกอย่างเดียว)", () => ({ stock: "edit" }), {}],
+  cashier: ["แคชเชียร์ / พนักงานหน้าร้าน (POS + เบิกของ)", () => ({ pos: "edit", stock: "edit" }), {}],
   lead: ["หัวหน้างาน (ลา/เบิก/ลงเวลา)", () => ({ stock: "edit", leave: "edit", advance: "edit", attendance: "edit", employees: "view" }), {}],
   viewer: ["ดูอย่างเดียว (ทุกเมนู)", m => Object.fromEntries(m.map(x => [x.key, "view"])), {}]
 };
@@ -2592,7 +3158,7 @@ let rendering = false, pending = false;
 async function render() {
   if (rendering) { pending = true; return; } rendering = true;
   try {
-    window.onbeforeunload = null;
+    window.onbeforeunload = null; posStopTimers();
     $("#modal-root").innerHTML = "";
     const parts = (location.hash.slice(1) || "/").split("/").filter(Boolean);
     // ออกจากหน้าผู้ดูแลเมื่อไหร่ ต้องใส่ User/Password ใหม่ทุกครั้ง
@@ -2601,6 +3167,7 @@ async function render() {
     if (parts[0] === "admin") await renderAdmin(parts[1] || "overview", parts.slice(2));
     else if (parts[0] === "b" && parts[1]) await renderBranch(parts[1], parts[2] || "home", parts.slice(3));
     else if (parts[0] === "checkin" && parts[1]) await renderCheckin(parts[1]);
+    else if (parts[0] === "display" && parts[1]) { await renderDisplay(parts[1]); return; }
     else { S.bid = null; S.binfo = null; await renderLanding(); }
     window.scrollTo(0, 0);
   } finally { rendering = false; if (pending) { pending = false; render(); } }
